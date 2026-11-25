@@ -102,15 +102,22 @@ bool PlausibleMatrix(const Mat4& m) noexcept {
     return nonZero >= 6;
 }
 
-// Candidate passes only if the local player's body center lands near the screen center.
-bool ProjectsNearCenter(const Mat4& m, const Vec3& local, Vec2 screen) noexcept {
+// Candidate passes only if the local player's body center lands near the screen center, read row-major or
+// column-major; `transposed` reports which layout passed (row-major tried first).
+bool ProjectsNearCenter(const Mat4& m, const Vec3& local, Vec2 screen, bool& transposed) noexcept {
     if (!PlausibleMatrix(m)) return false;
     const Vec3 mid{local.x, local.y + kHeadHeight * 0.5f, local.z};
-    Vec2 s;
-    if (!Esp::WorldToScreen(m, mid, screen, s)) return false;
-    const float dx = s.x - screen.x * 0.5f, dy = s.y - screen.y * 0.5f;
     const float tol = kCenterTol * screen.y;
-    return dx * dx + dy * dy <= tol * tol;
+    for (const bool t : {false, true}) {
+        Vec2 s;
+        if (!Esp::WorldToScreen(m, mid, screen, s, t)) continue;
+        const float dx = s.x - screen.x * 0.5f, dy = s.y - screen.y * 0.5f;
+        if (dx * dx + dy * dy <= tol * tol) {
+            transposed = t;
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -156,8 +163,10 @@ bool Esp::ReadViewMatrix(Mat4& out, const Vec3& local) {
 
     if (viewAddr_) {
         const auto m = proc_.Read<Mat4>(viewAddr_);
-        if (m && ProjectsNearCenter(*m, local, screen)) {
-            out = *m;
+        bool t = false;
+        if (m && ProjectsNearCenter(*m, local, screen, t)) {
+            out   = *m;
+            viewT_ = t;
             return true;
         }
         viewAddr_ = 0;
@@ -172,9 +181,11 @@ bool Esp::ReadViewMatrix(Mat4& out, const Vec3& local) {
         for (size_t i = 0; i + sizeof(Mat4) <= n; i += sizeof(float)) {
             Mat4 m;
             std::memcpy(&m, d + i, sizeof m);
-            if (!ProjectsNearCenter(m, local, screen)) continue;
+            bool t = false;
+            if (!ProjectsNearCenter(m, local, screen, t)) continue;
             viewAddr_ = addr + i;
-            out = m;
+            viewT_    = t;
+            out       = m;
             return true;
         }
         return false;
@@ -246,13 +257,15 @@ bool Esp::Update() {
     return true;
 }
 
-bool Esp::WorldToScreen(const Mat4& vp, const Vec3& w, Vec2 screen, Vec2& out) noexcept {
+bool Esp::WorldToScreen(const Mat4& vp, const Vec3& w, Vec2 screen, Vec2& out, bool transposed) noexcept {
     const float* m = vp.m;
-    const float clipW = m[12] * w.x + m[13] * w.y + m[14] * w.z + m[15];
+    const auto at = [m, transposed](int r, int c) { return transposed ? m[c * 4 + r] : m[r * 4 + c]; };
+
+    const float clipW = at(3, 0) * w.x + at(3, 1) * w.y + at(3, 2) * w.z + at(3, 3);
     if (!(clipW > 0.001f)) return false;  // behind the camera (also rejects NaN)
 
-    const float nx = (m[0] * w.x + m[1] * w.y + m[2] * w.z + m[3]) / clipW;
-    const float ny = (m[4] * w.x + m[5] * w.y + m[6] * w.z + m[7]) / clipW;
+    const float nx = (at(0, 0) * w.x + at(0, 1) * w.y + at(0, 2) * w.z + at(0, 3)) / clipW;
+    const float ny = (at(1, 0) * w.x + at(1, 1) * w.y + at(1, 2) * w.z + at(1, 3)) / clipW;
     if (!std::isfinite(nx) || !std::isfinite(ny)) return false;
 
     out.x = screen.x * 0.5f * (1.f + nx);
@@ -287,8 +300,8 @@ void Esp::Render(ImDrawList* dl, Vec2 screen) const {
         if (cfg_.maxDistance > 0.f && meters > cfg_.maxDistance) continue;
 
         Vec2 top, bottom;
-        if (!WorldToScreen(view_, e.head, screen, top)) continue;
-        if (!WorldToScreen(view_, e.origin, screen, bottom)) continue;
+        if (!WorldToScreen(view_, e.head, screen, top, viewT_)) continue;
+        if (!WorldToScreen(view_, e.origin, screen, bottom, viewT_)) continue;
 
         const float h = bottom.y - top.y;
         if (!(h > 1.f)) continue;  // degenerate / upside-down

@@ -70,7 +70,8 @@ public:
     // Draws one frame into the given list; screen is the overlay size in pixels.
     void Render(ImDrawList* dl, Vec2 screen) const;
 
-    static bool WorldToScreen(const Mat4& vp, const Vec3& world, Vec2 screen, Vec2& out) noexcept;
+    // transposed = read the matrix column-major (w row at m[3], m[7], m[11], m[15]).
+    static bool WorldToScreen(const Mat4& vp, const Vec3& world, Vec2 screen, Vec2& out, bool transposed = false) noexcept;
 
 private:
     // Heap scan for the live BattleModel (first qword == its Il2CppClass*); cached, rescanned when reads fail.
@@ -95,6 +96,7 @@ private:
     uintptr_t            battleModel_ = 0;
     uint64_t             nextScanMs_  = 0;
     uintptr_t            viewAddr_    = 0;
+    bool                 viewT_       = false;  // layout the validated matrix was found in
     uint64_t             nextMatScanMs_ = 0;
     std::vector<Entity>  entities_;
 };
