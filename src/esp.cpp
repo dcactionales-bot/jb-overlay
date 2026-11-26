@@ -57,8 +57,10 @@ constexpr uintptr_t kEntryValue           = 0x10;
 }  // namespace off
 
 constexpr int      kMaxEntities = 4096;
-constexpr size_t   kScanChunk   = 1u << 20;  // bytes per ReadBuf during the heap scan
+constexpr size_t   kScanChunk   = 1u << 18;  // 256 KB per ReadBuf: smaller working set, running_ checked more often
 constexpr uint64_t kRescanGapMs = 2000;      // a failed scan walks the whole heap, so retry no faster than this
+constexpr uint64_t kScanGapMs   = 500;       // breather between the two scans in a pass so the walk doesn't peg a core
+constexpr uint32_t kRevalidateMask = 31;     // re-read+re-validate the matrix every 32nd frame, trust the cache between
 constexpr float    kMatMax      = 1.0e5f;    // |element| bound for a plausible matrix
 constexpr float    kMatEps      = 1.0e-4f;
 constexpr float    kCenterTol   = 0.35f;     // local player must project within this fraction of screen height from center
@@ -125,6 +127,7 @@ bool ProjectsNearCenter(const Mat4& m, const Vec3& local, Vec2 screen, bool& tra
 
 Esp::Esp(const mem::Process& proc) : proc_(proc) {
     static_assert(std::atomic<uintptr_t>::is_always_lock_free, "scan results are shared without a lock");
+    screen_ = {static_cast<float>(GetSystemMetrics(SM_CXSCREEN)), static_cast<float>(GetSystemMetrics(SM_CYSCREEN))};
     running_.store(true);
     scanThread_ = std::thread(&Esp::ScanLoop, this);
 }
@@ -135,8 +138,8 @@ Esp::~Esp() {
 }
 
 // Spins both full-heap scans off the main loop. Each runs only while its published address is 0, so a
-// main-thread invalidation (store 0) is what asks for a rescan. A full walk is followed by the rescan gap
-// so a detached or never-resolving target can't peg a core; idle polling is cheap between.
+// main-thread invalidation (store 0) is what asks for a rescan. Once both are resolved the thread returns
+// so it costs nothing; EnsureScanThread re-arms it if the main thread later zeroes an address.
 void Esp::ScanLoop() {
     while (running_.load()) {
         bool walked = false;
@@ -146,7 +149,9 @@ void Esp::ScanLoop() {
             walked = true;
         }
 
-        if (viewAddr_.load() == 0 && haveLocal_.load()) {
+        if (walked) std::this_thread::sleep_for(std::chrono::milliseconds(kScanGapMs));  // breather between the two scans
+
+        if (running_.load() && viewAddr_.load() == 0 && haveLocal_.load()) {
             const Vec3 local{localX_.load(), localY_.load(), localZ_.load()};
             bool t = false;
             if (const uintptr_t va = ScanViewMatrix(local, t)) {
@@ -156,7 +161,22 @@ void Esp::ScanLoop() {
             walked = true;
         }
 
+        if (battleModelAddr_.load() && viewAddr_.load()) {  // both found -> stop the worker completely
+            scanDone_.store(true);
+            return;
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(walked ? kRescanGapMs : 50));
+    }
+}
+
+// Called from Update() after it invalidates an address: if the worker had already finished, join the dead
+// thread and start a fresh one so the zeroed address gets rescanned. No-op while the worker is still running.
+void Esp::EnsureScanThread() {
+    if (scanDone_.load() && scanThread_.joinable()) {
+        scanThread_.join();
+        scanDone_.store(false);
+        scanThread_ = std::thread(&Esp::ScanLoop, this);
     }
 }
 
@@ -175,6 +195,7 @@ uintptr_t Esp::ScanBattleModel() const {
 
     uintptr_t found = 0;
     ScanHeap(proc_, kScanChunk, 0, [&](uintptr_t addr, const uint8_t* d, size_t n) {
+        if (!running_.load()) return true;  // teardown: stop the walk so the join doesn't wait it out (found stays 0)
         for (size_t i = 0; i + sizeof(uintptr_t) <= n; i += sizeof(uintptr_t)) {
             uintptr_t q;
             std::memcpy(&q, d + i, sizeof q);
@@ -189,12 +210,13 @@ uintptr_t Esp::ScanBattleModel() const {
 }
 
 uintptr_t Esp::ScanViewMatrix(const Vec3& local, bool& transposed) const {
-    const Vec2 screen{static_cast<float>(GetSystemMetrics(SM_CXSCREEN)), static_cast<float>(GetSystemMetrics(SM_CYSCREEN))};
+    const Vec2 screen = screen_;
 
     uintptr_t found  = 0;
     bool      foundT = false;
     // Chunks overlap by one matrix so a candidate straddling a boundary is not lost.
     ScanHeap(proc_, kScanChunk, sizeof(Mat4), [&](uintptr_t addr, const uint8_t* d, size_t n) {
+        if (!running_.load()) return true;  // teardown: stop the walk so the join doesn't wait it out (found stays 0)
         for (size_t i = 0; i + sizeof(Mat4) <= n; i += sizeof(float)) {
             Mat4 m;
             std::memcpy(&m, d + i, sizeof m);
@@ -229,6 +251,7 @@ bool Esp::Update() {
     const uintptr_t entries = rd(dict + off::kDictEntries);
     if (!world || !dict || !playerK || !entries) {
         battleModelAddr_.store(0);  // stale -> worker rescans
+        EnsureScanThread();
         return false;
     }
 
@@ -242,13 +265,15 @@ bool Esp::Update() {
         const uintptr_t ent  = rd(slot + off::kEntryValue);
         if (!ent || rd(ent) != playerK) continue;  // Il2CppObject::klass filters non-player entities
 
-        const uintptr_t chr = rd(ent + off::kServerModel);
-        const uintptr_t xf  = rd(chr + off::kCharTransform);
-        const uintptr_t hp  = rd(rd(chr + off::kCharPrivate) + off::kPrivHealth);
-        if (!chr || !xf || !hp) continue;
+        const uintptr_t chr  = rd(ent + off::kServerModel);
+        const uintptr_t xf   = rd(chr + off::kCharTransform);
+        const uintptr_t priv = rd(chr + off::kCharPrivate);
+        const uintptr_t hp   = priv ? rd(priv + off::kPrivHealth) : 0;  // null private -> bail, don't read a fixed low addr
+        const uintptr_t hd   = hp ? rd(hp + off::kHealthData) : 0;
+        if (!chr || !xf || !hp || !hd) continue;
 
         const auto pos = proc_.Read<Vec3>(xf + off::kXYZ);
-        const auto cur = proc_.Read<int32_t>(rd(hp + off::kHealthData) + off::kPrimValue);
+        const auto cur = proc_.Read<int32_t>(hd + off::kPrimValue);
         const auto max = proc_.Read<int32_t>(hp + off::kMaxAmount);
         if (!pos || !cur || !max) continue;
 
@@ -285,17 +310,20 @@ bool Esp::Update() {
         return false;  // worker still hunting the matrix
     }
 
-    // Cheap per-frame re-validate on the main thread: the address can drift, the full walk cannot run here.
-    const auto vp = proc_.Read<Mat4>(va);
-    const Vec2 screen{static_cast<float>(GetSystemMetrics(SM_CXSCREEN)), static_cast<float>(GetSystemMetrics(SM_CYSCREEN))};
-    bool t = viewTFound_.load();
-    if (!vp || !ProjectsNearCenter(*vp, localOrigin_, screen, t)) {
-        viewAddr_.store(0);  // drifted -> worker rescans
-        entities_.clear();
-        return false;
+    // Re-validate the matrix address only every 32nd frame; it rarely drifts and the read is the hot cost.
+    // shortcut: a drift goes uncaught for up to 32 frames (brief stale boxes), re-read sooner if that shows.
+    if ((frameCount_++ & kRevalidateMask) == 0 || view_.m[15] == 0.f) {
+        const auto vp = proc_.Read<Mat4>(va);
+        bool t = viewTFound_.load();
+        if (!vp || !ProjectsNearCenter(*vp, localOrigin_, screen_, t)) {
+            viewAddr_.store(0);  // drifted -> worker rescans
+            EnsureScanThread();
+            entities_.clear();
+            return false;
+        }
+        view_  = *vp;
+        viewT_ = t;
     }
-    view_  = *vp;
-    viewT_ = t;
     return true;
 }
 

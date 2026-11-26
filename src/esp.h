@@ -78,7 +78,11 @@ public:
 
 private:
     // Background worker: owns both full-heap scans so Update() never walks the heap on the main thread.
+    // Returns (thread ends) once both addresses are resolved; EnsureScanThread re-arms it if one drifts.
     void ScanLoop();
+
+    // Relaunches the worker if it finished and the main thread has since invalidated an address.
+    void EnsureScanThread();
 
     // Heap scan for the live BattleModel (first qword == its Il2CppClass*). Returns 0 if not found.
     uintptr_t ScanBattleModel() const;
@@ -99,7 +103,9 @@ private:
     Config               cfg_;
     Mat4                 view_;
     Vec3                 localOrigin_;
+    Vec2                 screen_;          // cached once in the ctor; no GetSystemMetrics on the hot path
     bool                 viewT_ = false;  // layout the validated matrix was found in
+    uint32_t             frameCount_ = 0;  // main-thread only: paces the view re-validate
     std::vector<Entity>  entities_;
 
     // Shared with ScanLoop: the worker publishes the found addresses, the main thread consumes them and
@@ -110,6 +116,7 @@ private:
     std::atomic<bool>      haveLocal_{false};
     std::atomic<float>     localX_{0.f}, localY_{0.f}, localZ_{0.f};
     std::atomic<bool>      running_{false};
+    std::atomic<bool>      scanDone_{false};  // worker set this true right before returning
     std::thread            scanThread_;
 };
 

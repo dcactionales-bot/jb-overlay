@@ -6,6 +6,9 @@
 #include <dxgi.h>
 #include <dwmapi.h>
 
+#include <cstdarg>
+#include <cstdio>
+
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
@@ -16,6 +19,17 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
 namespace {
+
+// Boot/stage log to stdout. GUI subsystem has no console of its own, so run
+// the exe from a terminal (or redirect) to read it; fflush keeps it live.
+void Stage(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    std::vfprintf(stdout, fmt, args);
+    va_end(args);
+    std::fputc('\n', stdout);
+    std::fflush(stdout);
+}
 
 constexpr wchar_t kTargetExe[] = L"ROB RUN.exe";
 constexpr ULONGLONG kAttachGapMs = 1000;
@@ -119,6 +133,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
+    Stage("[boot] wWinMain enter");
     ImGui_ImplWin32_EnableDpiAwareness();
 
     WNDCLASSEXW wc{};
@@ -128,35 +143,44 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     wc.hInstance = hInstance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = L"dx11_overlay";
-    if (!RegisterClassExW(&wc))
+    if (!RegisterClassExW(&wc)) {
+        Stage("[boot] RegisterClassExW failed: %lu", GetLastError());
         return 1;
+    }
 
     const int screenW = GetSystemMetrics(SM_CXSCREEN);
     const int screenH = GetSystemMetrics(SM_CYSCREEN);
+    Stage("[window] creating %dx%d overlay", screenW, screenH);
 
     HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
                                 wc.lpszClassName, L"overlay", WS_POPUP, 0, 0, screenW, screenH,
                                 nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) {
+        Stage("[window] CreateWindowExW failed: %lu", GetLastError());
         UnregisterClassW(wc.lpszClassName, hInstance);
         return 1;
     }
+    Stage("[window] hwnd ok");
 
     // Layered at full opacity; per-pixel transparency comes from DWM + zero-alpha clear.
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
     const MARGINS margins{-1, -1, -1, -1};
     DwmExtendFrameIntoClientArea(hwnd, &margins);
 
+    Stage("[dx11] creating device + swap chain");
     if (!CreateDevice(hwnd)) {
+        Stage("[dx11] CreateDevice failed");
         CleanupDevice();
         DestroyWindow(hwnd);
         UnregisterClassW(wc.lpszClassName, hInstance);
         return 1;
     }
+    Stage("[dx11] device ok");
 
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
 
+    Stage("[imgui] init");
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -166,6 +190,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_dx.device, g_dx.context);
+    Stage("[imgui] backends up");
 
     mem::Process proc;  // declared before esp: esp holds a reference, destructs first
     esp::Esp esp(proc);
@@ -175,6 +200,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     bool running = true;
     const float clear[4] = {0.f, 0.f, 0.f, 0.f};
 
+    Stage("[loop] enter");
+    const char* exitReason = "WM_QUIT";
     while (running) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -187,8 +214,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             break;
 
         // Hotkeys polled globally: the window is click-through and normally unfocused.
-        if (GetAsyncKeyState(VK_END) & 1)
+        if (GetAsyncKeyState(VK_END) & 1) {
+            exitReason = "End pressed";
             break;
+        }
         if (GetAsyncKeyState(VK_INSERT) & 1) {
             menuOpen = !menuOpen;
             SetClickThrough(hwnd, !menuOpen);
@@ -198,8 +227,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             CleanupRenderTarget();
             g_dx.swapChain->ResizeBuffers(0, g_resizeW, g_resizeH, DXGI_FORMAT_UNKNOWN, 0);
             g_resizeW = g_resizeH = 0;
-            if (!CreateRenderTarget())
+            if (!CreateRenderTarget()) {
+                exitReason = "CreateRenderTarget failed on resize";
                 break;
+            }
         }
 
         if (proc && !proc.Alive())
@@ -238,9 +269,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
         const HRESULT hr = g_dx.swapChain->Present(1, 0);
-        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
+        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
+            exitReason = "Present device lost";
             break;
+        }
     }
+    Stage("[loop] exit: %s", exitReason);
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
