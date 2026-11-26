@@ -6,9 +6,11 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <string>
 #include <winternl.h>
+#include <intrin.h>
 
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -22,7 +24,6 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 
 namespace {
 
-// compile-time XOR
 constexpr wchar_t xkey = 0x4B2F;
 template <size_t N>
 struct XW {
@@ -33,7 +34,6 @@ struct XW {
 };
 
 static constexpr XW xTarget{L"ROB RUN.exe"};
-static constexpr XW xDevPath{L"\\\\.\\WfpDiag"};
 
 void Stage(const char* fmt, ...) {
     va_list args; va_start(args, fmt);
@@ -122,7 +122,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 // ============================================================
-// Anti-debug bypass
+// Game window finder
+// ============================================================
+
+struct WndFinder { DWORD pid; HWND result; };
+static BOOL CALLBACK FindGameWndCb(HWND h, LPARAM lp) {
+    auto* f = reinterpret_cast<WndFinder*>(lp);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (pid == f->pid && IsWindowVisible(h)) {
+        RECT r;
+        GetClientRect(h, &r);
+        if (r.right > 200 && r.bottom > 200) {
+            f->result = h;
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+HWND FindGameWindow(DWORD pid) {
+    WndFinder f{pid, nullptr};
+    EnumWindows(FindGameWndCb, reinterpret_cast<LPARAM>(&f));
+    return f.result;
+}
+
+// ============================================================
+// Anti-detection bypass
 // ============================================================
 namespace bypass {
 
@@ -149,9 +175,73 @@ void ClearHeaders() {
     }
 }
 
+void UnhookNtdll() {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return;
+
+    wchar_t sysDir[MAX_PATH];
+    GetSystemDirectoryW(sysDir, MAX_PATH);
+    wchar_t path[MAX_PATH];
+    wsprintfW(path, L"%s\\ntdll.dll", sysDir);
+
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+
+    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    CloseHandle(file);
+    if (!mapping) return;
+
+    auto clean = reinterpret_cast<BYTE*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0));
+    CloseHandle(mapping);
+    if (!clean) return;
+
+    auto cleanDos = reinterpret_cast<PIMAGE_DOS_HEADER>(clean);
+    auto cleanNt  = reinterpret_cast<PIMAGE_NT_HEADERS>(clean + cleanDos->e_lfanew);
+
+    auto sec = IMAGE_FIRST_SECTION(cleanNt);
+    for (WORD i = 0; i < cleanNt->FileHeader.NumberOfSections; ++i, ++sec) {
+        if (sec->Name[0] == '.' && sec->Name[1] == 't' &&
+            sec->Name[2] == 'e' && sec->Name[3] == 'x' && sec->Name[4] == 't') {
+            BYTE* dst = reinterpret_cast<BYTE*>(ntdll) + sec->VirtualAddress;
+            BYTE* src = clean + sec->PointerToRawData;
+            DWORD sz  = sec->Misc.VirtualSize;
+            DWORD old;
+            if (VirtualProtect(dst, sz, PAGE_EXECUTE_READWRITE, &old)) {
+                std::memcpy(dst, src, sz);
+                VirtualProtect(dst, sz, old, &old);
+            }
+            break;
+        }
+    }
+    UnmapViewOfFile(clean);
+}
+
+void EraseCommandLine() {
+    auto* peb = reinterpret_cast<BYTE*>(__readgsqword(0x60));
+    if (!peb) return;
+    auto* params = *reinterpret_cast<BYTE**>(peb + 0x20);
+    if (!params) return;
+    // CommandLine UNICODE_STRING at RTL_USER_PROCESS_PARAMETERS+0x70
+    auto* cmdLen = reinterpret_cast<USHORT*>(params + 0x70);
+    auto* cmdBuf = *reinterpret_cast<wchar_t**>(params + 0x78);
+    if (cmdBuf && *cmdLen > 0) {
+        SecureZeroMemory(cmdBuf, *cmdLen);
+        *cmdLen = 0;
+    }
+    // ImagePathName at +0x60
+    auto* imgLen = reinterpret_cast<USHORT*>(params + 0x60);
+    auto* imgBuf = *reinterpret_cast<wchar_t**>(params + 0x68);
+    if (imgBuf && *imgLen > 0) {
+        SecureZeroMemory(imgBuf, *imgLen);
+        *imgLen = 0;
+    }
+}
+
 void Apply() {
+    UnhookNtdll();
     HideThread();
     ClearHeaders();
+    EraseCommandLine();
 }
 
 }  // namespace bypass
@@ -161,7 +251,6 @@ void Apply() {
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     Stage("[boot] starting");
 
-    // load offsets config (next to exe)
     cfg::Offsets offsets;
     char exePath[MAX_PATH]{};
     GetModuleFileNameA(nullptr, exePath, MAX_PATH);
@@ -185,14 +274,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
 
     if (offsets.battleModelTypeInfo == 0)
         Stage("[config] battleModelTypeInfo=0, will auto-detect by class name (slower)");
-
-#if USE_DRIVER
-    auto devPath = xDevPath.dec();
-    if (mem::Driver::Instance().Open(devPath.s))
-        Stage("[driver] connected");
-    else
-        Stage("[driver] not found - reads will fail");
-#endif
 
     ImGui_ImplWin32_EnableDpiAwareness();
 
@@ -228,7 +309,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     }
 
     bypass::Apply();
-    Stage("[bypass] applied");
+    Stage("[bypass] applied (unhook+hide+clear+erase)");
 
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
@@ -240,7 +321,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     io.IniFilename = nullptr;
     ImGui::StyleColorsDark();
 
-    // dark theme tweaks
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 6.f;
     style.FrameRounding = 3.f;
@@ -259,11 +339,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         Stage("[config] loaded settings.ini");
     ULONGLONG nextAttachMs = 0;
 
-    bool menuOpen = false;
-    bool running  = true;
+    bool espActive = false;
+    bool menuOpen  = false;
+    bool running   = true;
+    HWND gameWindow = nullptr;
     const float clear[4] = {0.f, 0.f, 0.f, 0.f};
 
-    Stage("[loop] enter");
+    Stage("[ready] F1: activate | INS: menu | END: exit");
     while (running) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -275,11 +357,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         if (GetAsyncKeyState(VK_END) & 1) break;
         if (GetAsyncKeyState(VK_INSERT) & 1) { menuOpen = !menuOpen; SetClickThrough(hwnd, !menuOpen); }
 
-        if (g_resizeW && g_resizeH) {
-            CleanupRenderTarget();
-            g_dx.swapChain->ResizeBuffers(0, g_resizeW, g_resizeH, DXGI_FORMAT_UNKNOWN, 0);
-            g_resizeW = g_resizeH = 0;
-            if (!CreateRenderTarget()) break;
+        // F1: toggle ESP activation
+        if (GetAsyncKeyState(VK_F1) & 1) {
+            espActive = !espActive;
+            if (espActive) {
+                Stage("[esp] activated");
+            } else {
+                Stage("[esp] deactivated");
+                esp.ResetScan();
+            }
         }
 
         // F6 saves settings
@@ -298,13 +384,39 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             }
         }
 
-        if (proc && !proc.Alive()) proc.Close();
+        if (g_resizeW && g_resizeH) {
+            CleanupRenderTarget();
+            g_dx.swapChain->ResizeBuffers(0, g_resizeW, g_resizeH, DXGI_FORMAT_UNKNOWN, 0);
+            g_resizeW = g_resizeH = 0;
+            if (!CreateRenderTarget()) break;
+        }
+
+        // process attach/detach
+        if (proc && !proc.Alive()) { proc.Close(); gameWindow = nullptr; }
         if (!proc && GetTickCount64() >= nextAttachMs) {
             auto target = xTarget.dec();
-            proc.Attach(target.s);
+            if (proc.Attach(target.s)) {
+                Stage("[attach] found game (pid %lu)", static_cast<unsigned long>(proc.Pid()));
+            }
             nextAttachMs = GetTickCount64() + kAttachGapMs;
         }
-        if (proc) esp.Update();
+
+        // track game window position
+        if (proc) {
+            if (!gameWindow || !IsWindow(gameWindow))
+                gameWindow = FindGameWindow(proc.Pid());
+            if (gameWindow) {
+                RECT r;
+                if (GetWindowRect(gameWindow, &r)) {
+                    int gw = r.right - r.left, gh = r.bottom - r.top;
+                    if (gw > 0 && gh > 0)
+                        SetWindowPos(hwnd, HWND_TOPMOST, r.left, r.top, gw, gh, SWP_NOACTIVATE);
+                }
+            }
+        }
+
+        // update ESP state only when active
+        if (proc && espActive) esp.Update();
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
@@ -316,8 +428,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             ImGui::Begin("jb overlay##menu", &menuOpen, ImGuiWindowFlags_NoCollapse);
             ImGui::TextColored(ImVec4(0.4f, 0.55f, 1.f, 1.f), "%.0f FPS", static_cast<double>(io.Framerate));
             ImGui::SameLine();
-            ImGui::TextDisabled("|  %s  |  INS: menu  END: exit  F5: offsets  F6: save",
-                                proc ? "attached" : "waiting");
+            ImGui::TextDisabled("|  %s  |  %s",
+                                proc ? "attached" : "waiting",
+                                espActive ? "ACTIVE" : "dormant");
+            ImGui::Separator();
+            ImGui::TextDisabled("F1: activate  INS: menu  F5: offsets  F6: save  END: exit");
             ImGui::Separator();
             esp.RenderMenu();
             ImGui::End();
@@ -327,11 +442,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         ImDrawList* dl = ImGui::GetBackgroundDrawList();
         esp::Vec2 scr{io.DisplaySize.x, io.DisplaySize.y};
 
-        esp.RenderMisc(dl, scr, io.Framerate);
-        esp.Render(dl, scr);
-        esp.RenderAim(scr);
-        esp.RenderWorld(dl, scr);
-        esp.RenderStatus(dl, scr, static_cast<bool>(proc));
+        if (espActive) {
+            esp.RenderMisc(dl, scr, io.Framerate);
+            esp.Render(dl, scr);
+            esp.RenderAim(scr);
+            esp.RenderWorld(dl, scr);
+        }
+        esp.RenderStatus(dl, scr, static_cast<bool>(proc), espActive);
 
         ImGui::Render();
         g_dx.context->OMSetRenderTargets(1, &g_dx.rtv, nullptr);
@@ -352,9 +469,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     DestroyWindow(hwnd);
     UnregisterClassW(className, hInstance);
 
-#if USE_DRIVER
-    mem::Driver::Instance().Close();
-#endif
     Stage("[exit] clean");
     return 0;
 }

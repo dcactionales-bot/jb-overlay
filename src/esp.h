@@ -115,7 +115,7 @@ public:
     void RenderAim(Vec2 screen);
     void RenderMisc(ImDrawList* dl, Vec2 screen, float fps) const;
     void RenderWorld(ImDrawList* dl, Vec2 screen) const;
-    void RenderStatus(ImDrawList* dl, Vec2 screen, bool attached) const;
+    void RenderStatus(ImDrawList* dl, Vec2 screen, bool attached, bool active) const;
     void RenderMenu();
 
     bool SaveSettings(const std::string& path) const;

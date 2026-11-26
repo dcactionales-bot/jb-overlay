@@ -962,8 +962,25 @@ void Esp::RenderWorld(ImDrawList* dl, Vec2 screen) const {
 // Status HUD
 // ============================================================
 
-void Esp::RenderStatus(ImDrawList* dl, Vec2 screen, bool attached) const {
+void Esp::RenderStatus(ImDrawList* dl, Vec2 screen, bool attached, bool active) const {
     if (!dl) return;
+
+    // dormant banner when ESP not activated
+    if (!active) {
+        const char* hint = attached ? "F1: activate  |  INS: menu  |  END: exit"
+                                    : "waiting for game...  |  END: exit";
+        ImVec2 hsz = ImGui::CalcTextSize(hint);
+        float hx = (screen.x - hsz.x) * 0.5f;
+        float hy = screen.y * 0.42f;
+        ShadowText(dl, ImVec2(hx, hy), IM_COL32(180, 200, 255, 160), hint);
+
+        const char* tag = "jb overlay";
+        ImVec2 tsz = ImGui::CalcTextSize(tag);
+        ShadowText(dl, ImVec2((screen.x - tsz.x) * 0.5f, hy - tsz.y - 6.f),
+                   IM_COL32(90, 110, 160, 100), tag);
+        return;
+    }
+
     char buf[128];
     const char* bmStatus = gmAddr_.load() ? "found"
                          : (off_.battleModelTypeInfo == 0 ? "name-scan..." : "scan...");
