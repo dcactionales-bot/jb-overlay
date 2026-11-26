@@ -56,6 +56,9 @@ public:
         return v;
     }
 
+    // VirtualQueryEx wrapper for heap scanning.
+    std::optional<MEMORY_BASIC_INFORMATION> QueryMemory(uintptr_t addr) const noexcept;
+
     // Ldr walk first, image scan if the loader list is empty / unreadable / missing the name.
     std::optional<ModuleInfo> FindModule(std::wstring_view name) const;
     std::optional<uintptr_t>  ModuleBase(std::wstring_view name) const;

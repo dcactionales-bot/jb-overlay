@@ -85,6 +85,14 @@ Process& Process::operator=(Process&& o) noexcept {
 
 Process::~Process() { Close(); }
 
+std::optional<MEMORY_BASIC_INFORMATION> Process::QueryMemory(uintptr_t addr) const noexcept {
+    if (!h_) return std::nullopt;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQueryEx(h_, reinterpret_cast<LPCVOID>(addr), &mbi, sizeof mbi))
+        return std::nullopt;
+    return mbi;
+}
+
 DWORD Process::FindPid(std::wstring_view exe) {
     if (exe.empty()) return 0;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);

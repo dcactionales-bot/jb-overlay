@@ -35,7 +35,7 @@ target_link_libraries(dx11_overlay PRIVATE imgui d3d11 dxgi d3dcompiler dwmapi)
 
 if(MSVC)
     target_compile_options(dx11_overlay PRIVATE /W4 /permissive-)
-    target_compile_definitions(dx11_overlay PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_definitions(dx11_overlay PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(dx11_overlay PRIVATE -Wall -Wextra)
 endif()
