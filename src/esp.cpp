@@ -3,6 +3,7 @@
 #include "esp.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -122,9 +123,44 @@ bool ProjectsNearCenter(const Mat4& m, const Vec3& local, Vec2 screen, bool& tra
 
 }  // namespace
 
-Esp::Esp(const mem::Process& proc) : proc_(proc) {}
+Esp::Esp(const mem::Process& proc) : proc_(proc) {
+    static_assert(std::atomic<uintptr_t>::is_always_lock_free, "scan results are shared without a lock");
+    running_.store(true);
+    scanThread_ = std::thread(&Esp::ScanLoop, this);
+}
 
-uintptr_t Esp::ResolveBattleModel() {
+Esp::~Esp() {
+    running_.store(false);  // stop the producer, then join before proc_ (declared after esp in main) dies
+    if (scanThread_.joinable()) scanThread_.join();
+}
+
+// Spins both full-heap scans off the main loop. Each runs only while its published address is 0, so a
+// main-thread invalidation (store 0) is what asks for a rescan. A full walk is followed by the rescan gap
+// so a detached or never-resolving target can't peg a core; idle polling is cheap between.
+void Esp::ScanLoop() {
+    while (running_.load()) {
+        bool walked = false;
+
+        if (battleModelAddr_.load() == 0) {
+            if (const uintptr_t bm = ScanBattleModel()) battleModelAddr_.store(bm);
+            walked = true;
+        }
+
+        if (viewAddr_.load() == 0 && haveLocal_.load()) {
+            const Vec3 local{localX_.load(), localY_.load(), localZ_.load()};
+            bool t = false;
+            if (const uintptr_t va = ScanViewMatrix(local, t)) {
+                viewTFound_.store(t);
+                viewAddr_.store(va);  // published last: a nonzero viewAddr_ implies viewTFound_ is already set
+            }
+            walked = true;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(walked ? kRescanGapMs : 50));
+    }
+}
+
+uintptr_t Esp::ScanBattleModel() const {
     const auto ga = proc_.ModuleBase(L"GameAssembly.dll");
     if (!ga) return 0;
     const uintptr_t klass = proc_.Read<uintptr_t>(*ga + off::kBattleModelTypeInfo).value_or(0);
@@ -137,59 +173,41 @@ uintptr_t Esp::ResolveBattleModel() {
         return world && proc_.Read<uintptr_t>(world + off::kModelsDict).value_or(0);
     };
 
-    if (battleModel_ && valid(battleModel_)) return battleModel_;
-    battleModel_ = 0;
-
-    const uint64_t now = GetTickCount64();
-    if (now < nextScanMs_) return 0;
-    nextScanMs_ = now + kRescanGapMs;
-
-    const bool found = ScanHeap(proc_, kScanChunk, 0, [&](uintptr_t addr, const uint8_t* d, size_t n) {
+    uintptr_t found = 0;
+    ScanHeap(proc_, kScanChunk, 0, [&](uintptr_t addr, const uint8_t* d, size_t n) {
         for (size_t i = 0; i + sizeof(uintptr_t) <= n; i += sizeof(uintptr_t)) {
             uintptr_t q;
             std::memcpy(&q, d + i, sizeof q);
             if (q == klass && valid(addr + i)) {
-                battleModel_ = addr + i;
+                found = addr + i;
                 return true;
             }
         }
         return false;
     });
-    return found ? battleModel_ : 0;
+    return found;
 }
 
-bool Esp::ReadViewMatrix(Mat4& out, const Vec3& local) {
+uintptr_t Esp::ScanViewMatrix(const Vec3& local, bool& transposed) const {
     const Vec2 screen{static_cast<float>(GetSystemMetrics(SM_CXSCREEN)), static_cast<float>(GetSystemMetrics(SM_CYSCREEN))};
 
-    if (viewAddr_) {
-        const auto m = proc_.Read<Mat4>(viewAddr_);
-        bool t = false;
-        if (m && ProjectsNearCenter(*m, local, screen, t)) {
-            out   = *m;
-            viewT_ = t;
-            return true;
-        }
-        viewAddr_ = 0;
-    }
-
-    const uint64_t now = GetTickCount64();
-    if (now < nextMatScanMs_) return false;
-    nextMatScanMs_ = now + kRescanGapMs;
-
+    uintptr_t found  = 0;
+    bool      foundT = false;
     // Chunks overlap by one matrix so a candidate straddling a boundary is not lost.
-    return ScanHeap(proc_, kScanChunk, sizeof(Mat4), [&](uintptr_t addr, const uint8_t* d, size_t n) {
+    ScanHeap(proc_, kScanChunk, sizeof(Mat4), [&](uintptr_t addr, const uint8_t* d, size_t n) {
         for (size_t i = 0; i + sizeof(Mat4) <= n; i += sizeof(float)) {
             Mat4 m;
             std::memcpy(&m, d + i, sizeof m);
             bool t = false;
             if (!ProjectsNearCenter(m, local, screen, t)) continue;
-            viewAddr_ = addr + i;
-            viewT_    = t;
-            out       = m;
+            found  = addr + i;
+            foundT = t;
             return true;
         }
         return false;
     });
+    transposed = foundT;
+    return found;
 }
 
 bool Esp::Update() {
@@ -201,14 +219,16 @@ bool Esp::Update() {
 
     const auto rd = [this](uintptr_t a) -> uintptr_t { return a ? proc_.Read<uintptr_t>(a).value_or(0) : 0; };
 
-    const uintptr_t battle  = ResolveBattleModel();
+    const uintptr_t battle = battleModelAddr_.load();
+    if (!battle) return false;  // worker still hunting the model
+
     const uintptr_t world   = rd(battle + off::kBattleEntities);
     const uintptr_t dict    = rd(world + off::kModelsDict);
     const uintptr_t playerK = rd(*ga + off::kPlayerEntityTypeInfo);
     const uintptr_t local   = rd(world + off::kLocalPlayer);
     const uintptr_t entries = rd(dict + off::kDictEntries);
-    if (!battle || !world || !dict || !playerK || !entries) {
-        battleModel_ = 0;  // stale cache -> rescan next call
+    if (!world || !dict || !playerK || !entries) {
+        battleModelAddr_.store(0);  // stale -> worker rescans
         return false;
     }
 
@@ -248,12 +268,34 @@ bool Esp::Update() {
     }
 
     // The matrix is validated against the local player, so it can only be resolved once the local entity is read.
-    Mat4 vp;
-    if (!haveLocal || !ReadViewMatrix(vp, localOrigin_)) {
+    if (!haveLocal) {
         entities_.clear();
         return false;
     }
-    view_ = vp;
+
+    // Hand the worker the origin it validates matrix candidates against (a slightly torn read only nudges the search tolerance).
+    localX_.store(localOrigin_.x);
+    localY_.store(localOrigin_.y);
+    localZ_.store(localOrigin_.z);
+    haveLocal_.store(true);
+
+    const uintptr_t va = viewAddr_.load();
+    if (!va) {
+        entities_.clear();
+        return false;  // worker still hunting the matrix
+    }
+
+    // Cheap per-frame re-validate on the main thread: the address can drift, the full walk cannot run here.
+    const auto vp = proc_.Read<Mat4>(va);
+    const Vec2 screen{static_cast<float>(GetSystemMetrics(SM_CXSCREEN)), static_cast<float>(GetSystemMetrics(SM_CYSCREEN))};
+    bool t = viewTFound_.load();
+    if (!vp || !ProjectsNearCenter(*vp, localOrigin_, screen, t)) {
+        viewAddr_.store(0);  // drifted -> worker rescans
+        entities_.clear();
+        return false;
+    }
+    view_  = *vp;
+    viewT_ = t;
     return true;
 }
 

@@ -1,8 +1,10 @@
 #pragma once
 // esp.h - overlay drawing state and entity feed. Declarations only; bodies in esp.cpp.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 #include "imgui.h"
@@ -56,6 +58,7 @@ struct Config {
 class Esp {
 public:
     explicit Esp(const mem::Process& proc);
+    ~Esp();
     Esp(const Esp&) = delete;
     Esp& operator=(const Esp&) = delete;
 
@@ -74,11 +77,14 @@ public:
     static bool WorldToScreen(const Mat4& vp, const Vec3& world, Vec2 screen, Vec2& out, bool transposed = false) noexcept;
 
 private:
-    // Heap scan for the live BattleModel (first qword == its Il2CppClass*); cached, rescanned when reads fail.
-    uintptr_t ResolveBattleModel();
+    // Background worker: owns both full-heap scans so Update() never walks the heap on the main thread.
+    void ScanLoop();
 
-    // Heap scan for a 4x4 matrix that projects `local` near screen center; cached, re-validated every call, rescanned when it fails.
-    bool ReadViewMatrix(Mat4& out, const Vec3& local);
+    // Heap scan for the live BattleModel (first qword == its Il2CppClass*). Returns 0 if not found.
+    uintptr_t ScanBattleModel() const;
+
+    // Heap scan for a 4x4 matrix that projects `local` near screen center. Returns 0, or the address and sets transposed.
+    uintptr_t ScanViewMatrix(const Vec3& local, bool& transposed) const;
 
     bool IsVisibleRole(Role r) const noexcept;
     ImU32 RoleColor(Role r) const noexcept;
@@ -93,12 +99,18 @@ private:
     Config               cfg_;
     Mat4                 view_;
     Vec3                 localOrigin_;
-    uintptr_t            battleModel_ = 0;
-    uint64_t             nextScanMs_  = 0;
-    uintptr_t            viewAddr_    = 0;
-    bool                 viewT_       = false;  // layout the validated matrix was found in
-    uint64_t             nextMatScanMs_ = 0;
+    bool                 viewT_ = false;  // layout the validated matrix was found in
     std::vector<Entity>  entities_;
+
+    // Shared with ScanLoop: the worker publishes the found addresses, the main thread consumes them and
+    // invalidates (store 0) to request a rescan. uintptr_t atomics are lock-free, so no mutex on the hot path.
+    std::atomic<uintptr_t> battleModelAddr_{0};
+    std::atomic<uintptr_t> viewAddr_{0};
+    std::atomic<bool>      viewTFound_{false};
+    std::atomic<bool>      haveLocal_{false};
+    std::atomic<float>     localX_{0.f}, localY_{0.f}, localZ_{0.f};
+    std::atomic<bool>      running_{false};
+    std::thread            scanThread_;
 };
 
 }  // namespace esp
