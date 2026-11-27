@@ -611,8 +611,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         // periodic status every 5 seconds
         if (GetTickCount64() >= nextStatusMs) {
             if (proc) {
-                Stage("[durum] oyun: BAGLI | esp: %s", espActive ? "ACIK" : "KAPALI");
-                if (logFile) { fprintf(logFile, "DURUM bagli esp=%s\n", espActive ? "ACIK" : "KAPALI"); fflush(logFile); }
+                Stage("[durum] oyun: BAGLI | esp: %s | BM:0x%llX VM:0x%llX ent:%d phase:%d names:%d",
+                    espActive ? "ACIK" : "KAPALI",
+                    static_cast<unsigned long long>(esp.GmAddr()),
+                    static_cast<unsigned long long>(esp.ViewAddr()),
+                    esp.EntityCount(), esp.ScanPhase(), esp.ScanNames());
+                if (logFile) {
+                    fprintf(logFile, "DURUM esp=%s BM=0x%llX VM=0x%llX ent=%d phase=%d names=%d\n",
+                        espActive ? "ACIK" : "KAPALI",
+                        static_cast<unsigned long long>(esp.GmAddr()),
+                        static_cast<unsigned long long>(esp.ViewAddr()),
+                        esp.EntityCount(), esp.ScanPhase(), esp.ScanNames());
+                    fflush(logFile);
+                }
             }
             else
                 Stage("[durum] oyun: BEKLENIYOR... | Oyunu ac, sonra F1 bas");

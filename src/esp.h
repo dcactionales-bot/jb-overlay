@@ -131,6 +131,8 @@ public:
     uintptr_t ViewAddr()    const noexcept { return viewAddr_.load(); }
     bool      HaveLocal()   const noexcept { return haveLocal_.load(); }
     int       EntityCount() const noexcept { return static_cast<int>(entities_.size()); }
+    int       ScanPhase()   const noexcept { return scanPhase_.load(); }
+    int       ScanNames()   const noexcept { return scanNames_.load(); }
 
     static bool WorldToScreen(const Mat4& vp, const Vec3& w, Vec2 screen, Vec2& out, bool transposed) noexcept;
 
@@ -189,6 +191,8 @@ private:
     std::atomic<uintptr_t> viewAddr_{0};
     std::atomic<bool>      viewTFound_{false};
     std::atomic<bool>      haveLocal_{false};
+    std::atomic<int>       scanPhase_{0};
+    std::atomic<int>       scanNames_{0};
     std::atomic<float>     localX_{0}, localY_{0}, localZ_{0};
 };
 

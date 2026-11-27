@@ -288,9 +288,10 @@ uintptr_t Esp::ScanGameManager() const {
 uintptr_t Esp::ScanGameManagerByName() const {
     if (off_.bmEntities == 0) return 0;
 
+    scanPhase_.store(1);
     auto gaName = xGA.dec();
     auto gaInfo = proc_.FindModule(gaName.s);
-    if (!gaInfo) return 0;
+    if (!gaInfo) { scanPhase_.store(-1); return 0; }
     const uintptr_t gaBase = gaInfo->base;
     const uint32_t  gaSize = gaInfo->size;
 
@@ -299,6 +300,7 @@ uintptr_t Esp::ScanGameManagerByName() const {
     const size_t needBytes = nameLen + 1;
 
     // pass 1: find "BattleModel\0" inside GameAssembly.dll
+    scanPhase_.store(2);
     std::vector<uintptr_t> nameAddrs;
     ScanModule(proc_, gaBase, gaSize, kScanChunk, needBytes, [&](uintptr_t addr, const uint8_t* d, size_t n) {
         if (!running_.load()) return true;
@@ -310,9 +312,11 @@ uintptr_t Esp::ScanGameManagerByName() const {
         }
         return false;
     });
-    if (nameAddrs.empty()) return 0;
+    scanNames_.store(static_cast<int>(nameAddrs.size()));
+    if (nameAddrs.empty()) { scanPhase_.store(-2); return 0; }
 
     // pass 2: find TypeInfo in GA whose name ptr (+0x10) points to the string
+    scanPhase_.store(3);
     std::unordered_set<uintptr_t> nameSet(nameAddrs.begin(), nameAddrs.end());
     uintptr_t klass = 0;
     ScanModule(proc_, gaBase, gaSize, kScanChunk, 0, [&](uintptr_t addr, const uint8_t* d, size_t n) {
@@ -334,9 +338,10 @@ uintptr_t Esp::ScanGameManagerByName() const {
         }
         return false;
     });
-    if (!klass) return 0;
+    if (!klass) { scanPhase_.store(-3); return 0; }
 
     // pass 3: find instance on heap whose klass ptr matches
+    scanPhase_.store(4);
     uintptr_t found = 0;
     ScanHeap(proc_, kScanChunk, 0, [&](uintptr_t addr, const uint8_t* d, size_t n) {
         if (!running_.load()) return true;
@@ -1278,10 +1283,39 @@ void Esp::RenderMenu() {
             row("cmIsDead",         off_.cmIsDead);
             row("cmRole",           off_.cmRole);
 
+            Section("Scan Progress");
+            {
+                int ph = scanPhase_.load();
+                int nm = scanNames_.load();
+                const char* phStr = "bekleniyor";
+                switch (ph) {
+                    case 1: phStr = "GameAssembly.dll araniyor..."; break;
+                    case 2: phStr = "\"BattleModel\" string araniyor..."; break;
+                    case 3: phStr = "TypeInfo araniyor..."; break;
+                    case 4: phStr = "Instance araniyor (heap)..."; break;
+                    case -1: phStr = "HATA: GameAssembly.dll BULUNAMADI"; break;
+                    case -2: phStr = "HATA: \"BattleModel\" string bulunamadi"; break;
+                    case -3: phStr = "HATA: TypeInfo bulunamadi"; break;
+                    default: if (gm) phStr = "tamamlandi"; break;
+                }
+                ImGui::Text("Faz: %s", phStr);
+                ImGui::Text("String eslesme: %d", nm);
+            }
+
             Section("Troubleshoot");
             if (!gmAddr_.load()) {
-                ImGui::TextWrapped("BattleModel bulunamadi. Oyunda mac/round icinde olman lazim. "
-                    "Lobby'de BattleModel yuklenmez.");
+                int ph = scanPhase_.load();
+                if (ph == -1)
+                    ImGui::TextWrapped("GameAssembly.dll bulunamadi. Oyun tam yuklenmediyse "
+                        "birka saniye bekle.");
+                else if (ph == -2)
+                    ImGui::TextWrapped("\"BattleModel\" stringi GameAssembly.dll icinde yok. "
+                        "Oyun guncellenmis olabilir, class ismi degismis olabilir.");
+                else if (ph == -3)
+                    ImGui::TextWrapped("String bulundu ama TypeInfo eslesmiyor. "
+                        "il2cpp struct layout degismis olabilir.");
+                else
+                    ImGui::TextWrapped("Scan devam ediyor... Mac icinde ol ve bekle.");
             } else if (!haveLocal_.load()) {
                 ImGui::TextWrapped("BattleModel bulundu ama local player yok. "
                     "Oyuna spawn olman lazim (spectator degil).");
