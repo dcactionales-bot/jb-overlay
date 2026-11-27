@@ -285,7 +285,7 @@ uintptr_t Esp::ScanGameManager() const {
     return found;
 }
 
-uintptr_t Esp::ScanGameManagerByName() const {
+uintptr_t Esp::ScanGameManagerByName() {
     if (off_.bmEntities == 0) return 0;
 
     scanPhase_.store(1);
@@ -1296,7 +1296,7 @@ void Esp::RenderMenu() {
                     case -1: phStr = "HATA: GameAssembly.dll BULUNAMADI"; break;
                     case -2: phStr = "HATA: \"BattleModel\" string bulunamadi"; break;
                     case -3: phStr = "HATA: TypeInfo bulunamadi"; break;
-                    default: if (gm) phStr = "tamamlandi"; break;
+                    default: if (gmAddr_.load()) phStr = "tamamlandi"; break;
                 }
                 ImGui::Text("Faz: %s", phStr);
                 ImGui::Text("String eslesme: %d", nm);

@@ -140,7 +140,7 @@ private:
     void      ScanLoop();
     void      EnsureScanThread();
     uintptr_t ScanGameManager() const;
-    uintptr_t ScanGameManagerByName() const;
+    uintptr_t ScanGameManagerByName();
     uintptr_t ScanViewMatrix(const Vec3& local, bool& transposed) const;
 
     bool  IsVisibleRole(Role r) const noexcept;
