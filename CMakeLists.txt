@@ -43,3 +43,11 @@ if(MSVC)
 else()
     target_compile_options(dx11_overlay PRIVATE -Wall -Wextra)
 endif()
+
+# copy offsets.cfg next to exe on every build
+add_custom_command(TARGET dx11_overlay POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/offsets.cfg"
+        "$<TARGET_FILE_DIR:dx11_overlay>/offsets.cfg"
+    COMMENT "Copying offsets.cfg to output directory"
+)
