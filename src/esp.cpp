@@ -104,6 +104,20 @@ bool ScanHeap(const mem::Process& proc, size_t chunk, size_t overlap, Visit&& vi
     return false;
 }
 
+template <class Visit>
+bool ScanModule(const mem::Process& proc, uintptr_t modBase, uint32_t modSize,
+                size_t chunk, size_t overlap, Visit&& visit) {
+    if (!modBase || !modSize) return false;
+    std::vector<uint8_t> buf(chunk);
+    const uintptr_t end = modBase + modSize;
+    for (uintptr_t p = modBase; p < end; p += chunk - overlap) {
+        const size_t n = static_cast<size_t>(std::min<uintptr_t>(chunk, end - p));
+        if (proc.ReadBuf(p, buf.data(), n) && visit(p, buf.data(), n)) return true;
+        if (p + n >= end) break;
+    }
+    return false;
+}
+
 bool PlausibleMatrix(const Mat4& m) noexcept {
     int nonZero = 0;
     for (float v : m.m) {
@@ -274,12 +288,19 @@ uintptr_t Esp::ScanGameManager() const {
 uintptr_t Esp::ScanGameManagerByName() const {
     if (off_.bmEntities == 0) return 0;
 
+    auto gaName = xGA.dec();
+    auto gaInfo = proc_.FindModule(gaName.s);
+    if (!gaInfo) return 0;
+    const uintptr_t gaBase = gaInfo->base;
+    const uint32_t  gaSize = gaInfo->size;
+
     auto cn = xClassName.dec();
     const size_t nameLen = std::strlen(cn.s);
     const size_t needBytes = nameLen + 1;
 
+    // pass 1: find "BattleModel\0" inside GameAssembly.dll
     std::vector<uintptr_t> nameAddrs;
-    ScanHeap(proc_, kScanChunk, needBytes, [&](uintptr_t addr, const uint8_t* d, size_t n) {
+    ScanModule(proc_, gaBase, gaSize, kScanChunk, needBytes, [&](uintptr_t addr, const uint8_t* d, size_t n) {
         if (!running_.load()) return true;
         for (size_t i = 0; i + needBytes <= n; ++i) {
             if (std::memcmp(d + i, cn.s, needBytes) != 0) continue;
@@ -291,9 +312,10 @@ uintptr_t Esp::ScanGameManagerByName() const {
     });
     if (nameAddrs.empty()) return 0;
 
+    // pass 2: find TypeInfo in GA whose name ptr (+0x10) points to the string
     std::unordered_set<uintptr_t> nameSet(nameAddrs.begin(), nameAddrs.end());
     uintptr_t klass = 0;
-    ScanHeap(proc_, kScanChunk, 0, [&](uintptr_t addr, const uint8_t* d, size_t n) {
+    ScanModule(proc_, gaBase, gaSize, kScanChunk, 0, [&](uintptr_t addr, const uint8_t* d, size_t n) {
         if (!running_.load() || klass) return true;
         for (size_t i = 0; i + 8 <= n; i += 8) {
             uintptr_t val;
@@ -314,6 +336,7 @@ uintptr_t Esp::ScanGameManagerByName() const {
     });
     if (!klass) return 0;
 
+    // pass 3: find instance on heap whose klass ptr matches
     uintptr_t found = 0;
     ScanHeap(proc_, kScanChunk, 0, [&](uintptr_t addr, const uint8_t* d, size_t n) {
         if (!running_.load()) return true;
