@@ -440,7 +440,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     char diagLine2[128] = "";
     bool diagAttached = false;
 
-    Stage("[ready] v5 — INS: menu | END: exit | F1: esp ac/kapa");
+    // open log file next to exe
+    FILE* logFile = nullptr;
+    {
+        wchar_t exePath[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        std::wstring logPath(exePath);
+        auto slash = logPath.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) logPath = logPath.substr(0, slash + 1);
+        logPath += L"DURUM.txt";
+        logFile = _wfopen(logPath.c_str(), L"w");
+        if (logFile) { fprintf(logFile, "BASLATILDI\n"); fflush(logFile); }
+    }
+
+    Stage("[ready] v6 — INS: menu | END: exit | F1: esp ac/kapa");
     Stage("============================================");
     Stage("  ESP OTOMATIK ACIK. OYUNU AC, BEKLE.");
     Stage("  Oyun bulununca otomatik baglanacak.");
@@ -509,6 +522,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                         diagLine2[0] = 0;
                         diagAttached = true;
                         attached = true;
+                        if (logFile) { fprintf(logFile, "BAGLANDI pid=%lu\n", static_cast<unsigned long>(pid)); fflush(logFile); }
                     } else {
                         bool canQuery = mem::Process::CanQueryOnly(pid);
                         Stage("!!! OYUN BULUNDU AMA BAGLANAMADI !!! pid=%lu", static_cast<unsigned long>(pid));
@@ -521,6 +535,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                               static_cast<unsigned>(proc.LastNtStatus()),
                               static_cast<unsigned long>(proc.LastWinError()),
                               canQuery ? "EVET" : "HAYIR");
+                        if (logFile) { fprintf(logFile, "EAC_ENGEL pid=%lu NtStatus=0x%08X WinErr=%lu QueryOnly=%s\n",
+                              static_cast<unsigned long>(pid), static_cast<unsigned>(proc.LastNtStatus()),
+                              static_cast<unsigned long>(proc.LastWinError()),
+                              canQuery ? "EVET" : "HAYIR"); fflush(logFile); }
                     }
                 }
             }
@@ -541,6 +559,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                             diagLine2[0] = 0;
                             diagAttached = true;
                             attached = true;
+                            if (logFile) { fprintf(logFile, "BAGLANDI %s pid=%lu\n", t.label, static_cast<unsigned long>(pid)); fflush(logFile); }
                             break;
                         } else {
                             bool canQuery = mem::Process::CanQueryOnly(pid);
@@ -554,6 +573,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                                   static_cast<unsigned>(proc.LastNtStatus()),
                                   static_cast<unsigned long>(proc.LastWinError()),
                                   canQuery ? "EVET" : "HAYIR");
+                            if (logFile) { fprintf(logFile, "EAC_ENGEL %s pid=%lu NtStatus=0x%08X WinErr=%lu QueryOnly=%s\n",
+                                  t.label, static_cast<unsigned long>(pid), static_cast<unsigned>(proc.LastNtStatus()),
+                                  static_cast<unsigned long>(proc.LastWinError()),
+                                  canQuery ? "EVET" : "HAYIR"); fflush(logFile); }
                         }
                     }
                 }
@@ -562,9 +585,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             if (!attached) {
                 ++failCount;
                 if (failCount <= 3) {
-                    Stage("--- OYUN BULUNAMADI (deneme %d) — process listesi:", failCount);
-                    ScanRunningProcesses();
-                    Stage("--- ROB RUN listede varsa: EAC engelliyor. Yoksa: oyun acilmamis.");
+                    Stage("--- OYUN BULUNAMADI (deneme %d) ---", failCount);
+                    if (logFile) { fprintf(logFile, "OYUN_YOK deneme=%d\n", failCount); fflush(logFile); }
                 }
             } else {
                 failCount = 0;
@@ -588,8 +610,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
 
         // periodic status every 5 seconds
         if (GetTickCount64() >= nextStatusMs) {
-            if (proc)
-                Stage("[durum] oyun: BAGLI | esp: %s", espActive ? "ACIK — F1 ile kapat" : "KAPALI — F1 bas!");
+            if (proc) {
+                Stage("[durum] oyun: BAGLI | esp: %s", espActive ? "ACIK" : "KAPALI");
+                if (logFile) { fprintf(logFile, "DURUM bagli esp=%s\n", espActive ? "ACIK" : "KAPALI"); fflush(logFile); }
+            }
             else
                 Stage("[durum] oyun: BEKLENIYOR... | Oyunu ac, sonra F1 bas");
             nextStatusMs = GetTickCount64() + 5000;
@@ -684,6 +708,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     UnregisterClassW(className, hInstance);
 
     Stage("[exit] clean");
+    if (logFile) { fprintf(logFile, "KAPATILDI\n"); fclose(logFile); }
     std::fflush(stdout);
     system("pause");
     FreeConsole();
