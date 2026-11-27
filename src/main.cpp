@@ -19,6 +19,7 @@
 #include "esp.h"
 #include "memory.h"
 #include "offsets.h"
+#include "syscall.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -310,6 +311,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
 
     bypass::Apply();
     Stage("[bypass] applied (unhook+hide+clear+erase)");
+    if (sc::g_sc.Init())
+        Stage("[syscall] indirect stubs ready (NtRVM+NtQVM+NtOP)");
+    else
+        Stage("[syscall] stubs failed — fallback to WinAPI");
 
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);

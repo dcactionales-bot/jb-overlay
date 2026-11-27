@@ -1,6 +1,7 @@
 // memory.cpp - Process bodies. C++20, MSVC /W4 /permissive-.
 
 #include "memory.h"
+#include "syscall.h"
 
 #include <tlhelp32.h>  // TH32CS_SNAPPROCESS only; module snapshots are never used
 
@@ -88,6 +89,12 @@ Process::~Process() { Close(); }
 std::optional<MEMORY_BASIC_INFORMATION> Process::QueryMemory(uintptr_t addr) const noexcept {
     if (!h_) return std::nullopt;
     MEMORY_BASIC_INFORMATION mbi{};
+    if (sc::g_sc.ready) {
+        SIZE_T ret = 0;
+        if (sc::g_sc.queryVm(h_, reinterpret_cast<PVOID>(addr), 0, &mbi, sizeof mbi, &ret) < 0)
+            return std::nullopt;
+        return mbi;
+    }
     if (!VirtualQueryEx(h_, reinterpret_cast<LPCVOID>(addr), &mbi, sizeof mbi))
         return std::nullopt;
     return mbi;
@@ -113,6 +120,17 @@ DWORD Process::FindPid(std::wstring_view exe) {
 bool Process::Attach(DWORD pid) {
     Close();
     if (pid == 0) return false;
+
+    if (sc::g_sc.ready) {
+        HANDLE h = nullptr;
+        sc::ObjAttr oa{}; oa.length = sizeof(oa);
+        sc::ClientId cid{}; cid.uniqueProcess = reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(pid));
+        if (sc::g_sc.openProc(&h, PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION, &oa, &cid) < 0 || !h)
+            return false;
+        h_ = h; pid_ = pid;
+        return true;
+    }
+
     HANDLE h = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!h) return false;
     h_ = h;
@@ -140,6 +158,8 @@ bool Process::ReadBuf(uintptr_t addr, void* dst, size_t size) const noexcept {
     if (!h_ || !dst || addr == 0 || size == 0 || size > kMaxRead) return false;
     if (addr + size < addr) return false;
     SIZE_T got = 0;
+    if (sc::g_sc.ready)
+        return sc::g_sc.readVm(h_, reinterpret_cast<PVOID>(addr), dst, size, &got) >= 0 && got == size;
     return ReadProcessMemory(h_, reinterpret_cast<LPCVOID>(addr), dst, size, &got) && got == size;
 }
 
@@ -197,9 +217,10 @@ std::optional<ModuleInfo> Process::FindModuleScan(std::wstring_view name) const 
     const auto hi = reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress);
     uintptr_t addr = reinterpret_cast<uintptr_t>(si.lpMinimumApplicationAddress);
 
-    MEMORY_BASIC_INFORMATION mbi{};
     for (size_t i = 0; i < kMaxRegions && addr < hi; ++i) {
-        if (!VirtualQueryEx(h_, reinterpret_cast<LPCVOID>(addr), &mbi, sizeof mbi)) break;
+        auto optMbi = QueryMemory(addr);
+        if (!optMbi) break;
+        auto& mbi = *optMbi;
 
         const auto rb = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
         const size_t rs = mbi.RegionSize;
