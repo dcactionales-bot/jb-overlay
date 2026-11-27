@@ -435,7 +435,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     HWND gameWindow = nullptr;
     const float clear[4] = {0.f, 0.f, 0.f, 0.f};
 
-    Stage("[ready] v2 — F1: activate | INS: menu | END: exit");
+    Stage("[ready] v3 — F1: activate | INS: menu | END: exit");
+    Stage("--------------------------------------------");
+    Stage("  EXE acildi. Oyunu ac, sonra F1 bas.");
+    Stage("  Konsolu acik birak, durum buraya yazilacak.");
+    Stage("--------------------------------------------");
+    ULONGLONG nextStatusMs = 0;
     while (running) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -545,6 +550,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                         SetWindowPos(hwnd, HWND_TOPMOST, r.left, r.top, gw, gh, SWP_NOACTIVATE);
                 }
             }
+        }
+
+        // periodic status every 3 seconds
+        if (GetTickCount64() >= nextStatusMs) {
+            Stage("[durum] oyun: %s | esp: %s | F1=esp ac/kapa | INS=menu",
+                  proc ? "BAGLI" : "BEKLENIYOR...",
+                  espActive ? "ACIK" : "KAPALI");
+            nextStatusMs = GetTickCount64() + 3000;
         }
 
         // update ESP state only when active
