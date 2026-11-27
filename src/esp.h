@@ -127,6 +127,11 @@ public:
     MiscConfig&  MiscCfg()  { return miscCfg_; }
     WorldConfig& WorldCfg() { return worldCfg_; }
 
+    uintptr_t GmAddr()      const noexcept { return gmAddr_.load(); }
+    uintptr_t ViewAddr()    const noexcept { return viewAddr_.load(); }
+    bool      HaveLocal()   const noexcept { return haveLocal_.load(); }
+    int       EntityCount() const noexcept { return static_cast<int>(entities_.size()); }
+
     static bool WorldToScreen(const Mat4& vp, const Vec3& w, Vec2 screen, Vec2& out, bool transposed) noexcept;
 
 private:

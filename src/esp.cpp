@@ -1035,19 +1035,23 @@ void Esp::RenderStatus(ImDrawList* dl, Vec2 screen, bool attached, bool active) 
     }
 
     char buf[128];
-    const char* bmStatus = gmAddr_.load() ? "found"
-                         : (off_.battleModelTypeInfo == 0 ? "name-scan..." : "scan...");
-    std::snprintf(buf, sizeof buf, "%s | BM:%s | VM:%s | %d ents",
-                  attached ? "attached" : "waiting",
-                  bmStatus,
-                  viewAddr_.load() ? "found" : "scan...",
-                  static_cast<int>(entities_.size()));
+    bool bmOk = gmAddr_.load() != 0;
+    bool vmOk = viewAddr_.load() != 0;
+    int ents = static_cast<int>(entities_.size());
+    std::snprintf(buf, sizeof buf, "%s  |  BM:%s  VM:%s  |  %d ent",
+                  attached ? "bagli" : "bekleniyor",
+                  bmOk ? "OK" : "...",
+                  vmOk ? "OK" : "...",
+                  ents);
     ImVec2 sz = ImGui::CalcTextSize(buf);
-    float pad = 5.f;
+    float pad = 6.f;
     float x = screen.x - sz.x - pad * 2.f;
     float y = screen.y - sz.y - pad * 2.f;
-    dl->AddRectFilled(ImVec2(x, y), ImVec2(screen.x, screen.y), IM_COL32(10, 10, 16, 150), 4.f);
-    ShadowText(dl, ImVec2(x + pad, y + pad), IM_COL32(140, 150, 170, 180), buf);
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(screen.x, screen.y), IM_COL32(10, 10, 16, 180), 6.f);
+    ImU32 col = (bmOk && vmOk && ents > 0) ? IM_COL32(100, 220, 120, 200)
+              : attached                     ? IM_COL32(220, 200, 80, 200)
+                                             : IM_COL32(160, 160, 180, 160);
+    ShadowText(dl, ImVec2(x + pad, y + pad), col, buf);
 }
 
 // ============================================================
@@ -1190,7 +1194,17 @@ void Esp::RenderMenu() {
 
         // ---- CONFIG TAB ----
         if (ImGui::BeginTabItem("Config")) {
-            Section("Game Offsets (offsets.cfg)");
+            Section("Hotkeys");
+            ImGui::BulletText("F5   Reload offsets.cfg");
+            ImGui::BulletText("F6   Save settings");
+            ImGui::BulletText("INS  Toggle menu");
+            ImGui::BulletText("END  Exit overlay");
+
+            ImGui::EndTabItem();
+        }
+
+        // ---- DEBUG TAB ----
+        if (ImGui::BeginTabItem("Debug")) {
             char hex[32];
             auto row = [&](const char* label, uintptr_t val) {
                 std::snprintf(hex, sizeof hex, "0x%llX", static_cast<unsigned long long>(val));
@@ -1199,31 +1213,63 @@ void Esp::RenderMenu() {
                 ImGui::Text("%s", hex);
             };
 
-            if (off_.battleModelTypeInfo == 0)
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.f), "%-22s auto-detect", "battleModelTypeInfo");
-            else
-                row("battleModelTypeInfo", off_.battleModelTypeInfo);
+            Section("Live State");
+            {
+                uintptr_t gm = gmAddr_.load();
+                uintptr_t vm = viewAddr_.load();
+                bool loc = haveLocal_.load();
+                int ents = static_cast<int>(entities_.size());
 
-            row("bmEntities", off_.bmEntities);
-            row("bePlayer", off_.bePlayer);
-            row("beModels", off_.beModels);
-            row("entityServerModel", off_.entityServerModel);
-            row("cmTransform", off_.cmTransform);
-            row("cmIsDead", off_.cmIsDead);
-            row("cmRole", off_.cmRole);
+                ImVec4 green(0.3f, 0.9f, 0.3f, 1.f), red(0.9f, 0.3f, 0.3f, 1.f), yellow(0.9f, 0.9f, 0.3f, 1.f);
 
-            Section("Scan State");
-            ImGui::Text("BM: 0x%llX", static_cast<unsigned long long>(gmAddr_.load()));
-            ImGui::Text("VM: 0x%llX", static_cast<unsigned long long>(viewAddr_.load()));
-            ImGui::Text("Local: %s  |  Entities: %d",
-                        haveLocal_.load() ? "yes" : "no",
-                        static_cast<int>(entities_.size()));
+                ImGui::TextColored(gm ? green : red, "BattleModel  ");
+                ImGui::SameLine();
+                if (gm) { ImGui::Text("0x%llX", static_cast<unsigned long long>(gm)); }
+                else     { ImGui::TextColored(yellow, "scanning..."); }
 
-            Section("Hotkeys");
-            ImGui::BulletText("F5  Reload offsets.cfg");
-            ImGui::BulletText("F6  Save settings");
-            ImGui::BulletText("Insert  Toggle menu");
-            ImGui::BulletText("End  Exit overlay");
+                ImGui::TextColored(vm ? green : red, "ViewMatrix   ");
+                ImGui::SameLine();
+                if (vm) { ImGui::Text("0x%llX", static_cast<unsigned long long>(vm)); }
+                else     { ImGui::TextColored(yellow, loc ? "scanning..." : "local player yok"); }
+
+                ImGui::TextColored(loc ? green : red, "Local Player ");
+                ImGui::SameLine();
+                ImGui::Text("%s", loc ? "bulundu" : "aranıyor...");
+
+                ImGui::TextColored(ents > 0 ? green : yellow, "Entities     ");
+                ImGui::SameLine();
+                ImGui::Text("%d", ents);
+            }
+
+            Section("Scan Mode");
+            ImGui::Text("%s", off_.battleModelTypeInfo == 0 ? "NAME-SCAN (otomatik)" : "RVA (offsets.cfg)");
+            if (off_.battleModelTypeInfo != 0)
+                row("TypeInfo RVA", off_.battleModelTypeInfo);
+
+            Section("Offsets");
+            row("bmEntities",       off_.bmEntities);
+            row("bePlayer",         off_.bePlayer);
+            row("beModels",         off_.beModels);
+            row("entityServerModel",off_.entityServerModel);
+            row("cmTransform",      off_.cmTransform);
+            row("cmIsDead",         off_.cmIsDead);
+            row("cmRole",           off_.cmRole);
+
+            Section("Troubleshoot");
+            if (!gmAddr_.load()) {
+                ImGui::TextWrapped("BattleModel bulunamadi. Oyunda mac/round icinde olman lazim. "
+                    "Lobby'de BattleModel yuklenmez.");
+            } else if (!haveLocal_.load()) {
+                ImGui::TextWrapped("BattleModel bulundu ama local player yok. "
+                    "Oyuna spawn olman lazim (spectator degil).");
+            } else if (!viewAddr_.load()) {
+                ImGui::TextWrapped("ViewMatrix araniyor. Kamera aktif oldugunda bulunur.");
+            } else if (entities_.empty()) {
+                ImGui::TextWrapped("Her sey bulundu ama entity yok. "
+                    "Offset'ler yanlis olabilir veya tek basinasin.");
+            } else {
+                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.f), "Her sey calisiyor.");
+            }
 
             ImGui::EndTabItem();
         }

@@ -443,11 +443,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     // open log file next to exe
     FILE* logFile = nullptr;
     {
-        wchar_t exePath[MAX_PATH]{};
-        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-        std::wstring logPath(exePath);
-        auto slash = logPath.find_last_of(L"\\/");
-        if (slash != std::wstring::npos) logPath = logPath.substr(0, slash + 1);
+        wchar_t logExe[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, logExe, MAX_PATH);
+        std::wstring logPath(logExe);
+        auto logSlash = logPath.find_last_of(L"\\/");
+        if (logSlash != std::wstring::npos) logPath = logPath.substr(0, logSlash + 1);
         logPath += L"DURUM.txt";
         logFile = _wfopen(logPath.c_str(), L"w");
         if (logFile) { fprintf(logFile, "BASLATILDI\n"); fflush(logFile); }
@@ -628,15 +628,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
 
         // menu window
         if (menuOpen) {
-            ImGui::SetNextWindowSize(ImVec2(380.f, 420.f), ImGuiCond_FirstUseEver);
-            ImGui::Begin("jb overlay##menu", &menuOpen, ImGuiWindowFlags_NoCollapse);
-            ImGui::TextColored(ImVec4(0.4f, 0.55f, 1.f, 1.f), "%.0f FPS", static_cast<double>(io.Framerate));
-            ImGui::SameLine();
-            ImGui::TextDisabled("|  %s  |  %s",
-                                proc ? "attached" : "waiting",
-                                espActive ? "ACTIVE" : "dormant");
-            ImGui::Separator();
-            ImGui::TextDisabled("F1: activate  INS: menu  F5: offsets  F6: save  END: exit");
+            ImGui::SetNextWindowSize(ImVec2(400.f, 440.f), ImGuiCond_FirstUseEver);
+            ImGui::Begin("JB OVERLAY##menu", &menuOpen,
+                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
+            {
+                float fps = io.Framerate;
+                ImVec4 fpsCol = fps > 55.f ? ImVec4(0.3f, 0.9f, 0.4f, 1.f)
+                              : fps > 30.f ? ImVec4(0.9f, 0.9f, 0.3f, 1.f)
+                                           : ImVec4(0.9f, 0.3f, 0.3f, 1.f);
+                ImGui::TextColored(fpsCol, "%.0f FPS", static_cast<double>(fps));
+                ImGui::SameLine();
+                ImU32 stCol = proc ? IM_COL32(100, 220, 120, 255) : IM_COL32(255, 80, 80, 255);
+                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(stCol), "|  %s", proc ? "BAGLI" : "BEKLENIYOR");
+                ImGui::SameLine();
+                if (diagAttached) {
+                    int ents = esp.EntityCount();
+                    ImGui::TextColored(ImVec4(0.6f, 0.65f, 0.8f, 1.f), "|  %d ent", ents);
+                }
+            }
             ImGui::Separator();
             esp.RenderMenu();
             ImGui::End();
@@ -654,34 +663,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         }
         esp.RenderStatus(dl, scr, static_cast<bool>(proc), espActive);
 
-        // === BIG ON-SCREEN DIAGNOSTIC ===
-        {
+        // === compact status pill top-left ===
+        if (!menuOpen) {
             ImFont* font = ImGui::GetFont();
-            float bigSize = font->FontSize * 2.0f;
-            float boxH = 130.f;
-
-            const char* title = "JB OVERLAY v6";
-            dl->AddRectFilled(ImVec2(10, 10), ImVec2(620, 10 + boxH), IM_COL32(0, 0, 0, 220), 8.f);
-            dl->AddRect(ImVec2(10, 10), ImVec2(620, 10 + boxH), IM_COL32(0, 255, 0, 255), 8.f, 0, 2.f);
-            dl->AddText(font, bigSize, ImVec2(20, 15), IM_COL32(0, 255, 0, 255), title);
-
-            ImU32 statusCol = diagAttached ? IM_COL32(0, 255, 0, 255) : IM_COL32(255, 50, 50, 255);
-            dl->AddText(font, font->FontSize * 1.5f, ImVec2(20, 55), statusCol, diagLine1);
-
-            if (diagLine2[0])
-                dl->AddText(font, font->FontSize * 1.2f, ImVec2(20, 82), IM_COL32(255, 255, 0, 255), diagLine2);
-
-            // show scan progress
-            if (diagAttached) {
-                auto& eCfg = esp.Cfg();
-                char scanBuf[128];
-                std::snprintf(scanBuf, sizeof scanBuf, "BM:%s | VM:%s | mode:%s",
-                    esp.Cfg().enabled ? "name-scan" : "off",
-                    esp.Cfg().enabled ? "bekliyor" : "off",
-                    off_.battleModelTypeInfo == 0 ? "NAME-SCAN" : "RVA");
-                dl->AddText(font, font->FontSize * 1.2f, ImVec2(20, 105),
-                    IM_COL32(180, 180, 255, 255), scanBuf);
+            char pill[192];
+            if (!diagAttached) {
+                std::snprintf(pill, sizeof pill, "JB  |  %s", diagLine1);
+            } else {
+                int ents = esp.EntityCount();
+                bool bmOk = esp.GmAddr() != 0;
+                bool vmOk = esp.ViewAddr() != 0;
+                std::snprintf(pill, sizeof pill, "JB  |  BM:%s  VM:%s  |  %d ent  |  INS: menu",
+                    bmOk ? "OK" : "...", vmOk ? "OK" : "...", ents);
             }
+            ImVec2 sz = ImGui::CalcTextSize(pill);
+            float px = 8.f, py = 4.f;
+            dl->AddRectFilled(ImVec2(10, 10), ImVec2(10 + sz.x + px * 2, 10 + sz.y + py * 2),
+                IM_COL32(10, 10, 16, 180), 6.f);
+            ImU32 col = diagAttached ? IM_COL32(100, 220, 120, 220) : IM_COL32(255, 80, 80, 220);
+            dl->AddText(font, font->FontSize, ImVec2(10 + px, 10 + py), col, pill);
         }
 
         ImGui::Render();
