@@ -435,7 +435,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     HWND gameWindow = nullptr;
     const float clear[4] = {0.f, 0.f, 0.f, 0.f};
 
-    Stage("[ready] v4 — INS: menu | END: exit | F1: esp ac/kapa");
+    // diagnostic state for on-screen HUD
+    char diagLine1[128] = "OYUN BEKLENIYOR...";
+    char diagLine2[128] = "";
+    bool diagAttached = false;
+
+    Stage("[ready] v5 — INS: menu | END: exit | F1: esp ac/kapa");
     Stage("============================================");
     Stage("  ESP OTOMATIK ACIK. OYUNU AC, BEKLE.");
     Stage("  Oyun bulununca otomatik baglanacak.");
@@ -487,7 +492,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         }
 
         // process attach/detach
-        if (proc && !proc.Alive()) { proc.Close(); gameWindow = nullptr; Stage("[detach] game closed"); }
+        if (proc && !proc.Alive()) {
+            proc.Close(); gameWindow = nullptr; Stage("[detach] game closed");
+            std::snprintf(diagLine1, sizeof diagLine1, "OYUN KAPANDI — tekrar ac");
+            diagLine2[0] = 0; diagAttached = false;
+        }
         if (!proc && GetTickCount64() >= nextAttachMs) {
             bool attached = false;
             // try configured name first
@@ -496,6 +505,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                 if (pid) {
                     if (proc.Attach(pid)) {
                         Stage("*** OYUN BULUNDU VE BAGLANDI! pid=%lu ***", static_cast<unsigned long>(pid));
+                        std::snprintf(diagLine1, sizeof diagLine1, "BAGLANDI! pid=%lu", static_cast<unsigned long>(pid));
+                        diagLine2[0] = 0;
+                        diagAttached = true;
                         attached = true;
                     } else {
                         bool canQuery = mem::Process::CanQueryOnly(pid);
@@ -504,6 +516,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                               static_cast<unsigned>(proc.LastNtStatus()),
                               static_cast<unsigned long>(proc.LastWinError()),
                               canQuery ? "EVET(EAC VM_READ engelliyor)" : "HAYIR(tamamen engelli)");
+                        std::snprintf(diagLine1, sizeof diagLine1, "EAC ENGELLIYOR! pid=%lu", static_cast<unsigned long>(pid));
+                        std::snprintf(diagLine2, sizeof diagLine2, "NtSt=0x%X Err=%lu Q=%s",
+                              static_cast<unsigned>(proc.LastNtStatus()),
+                              static_cast<unsigned long>(proc.LastWinError()),
+                              canQuery ? "EVET" : "HAYIR");
                     }
                 }
             }
@@ -520,6 +537,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                     if (pid) {
                         if (proc.Attach(pid)) {
                             Stage("*** OYUN BULUNDU: %s pid=%lu — BAGLANDI! ***", t.label, static_cast<unsigned long>(pid));
+                            std::snprintf(diagLine1, sizeof diagLine1, "BAGLANDI! %s pid=%lu", t.label, static_cast<unsigned long>(pid));
+                            diagLine2[0] = 0;
+                            diagAttached = true;
                             attached = true;
                             break;
                         } else {
@@ -529,6 +549,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                                   static_cast<unsigned>(proc.LastNtStatus()),
                                   static_cast<unsigned long>(proc.LastWinError()),
                                   canQuery ? "EVET(EAC VM_READ engelliyor)" : "HAYIR(tamamen engelli)");
+                            std::snprintf(diagLine1, sizeof diagLine1, "EAC ENGELLIYOR! %s pid=%lu", t.label, static_cast<unsigned long>(pid));
+                            std::snprintf(diagLine2, sizeof diagLine2, "NtSt=0x%X Err=%lu Q=%s",
+                                  static_cast<unsigned>(proc.LastNtStatus()),
+                                  static_cast<unsigned long>(proc.LastWinError()),
+                                  canQuery ? "EVET" : "HAYIR");
                         }
                     }
                 }
@@ -604,6 +629,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             esp.RenderWorld(dl, scr);
         }
         esp.RenderStatus(dl, scr, static_cast<bool>(proc), espActive);
+
+        // === BIG ON-SCREEN DIAGNOSTIC ===
+        {
+            ImFont* font = ImGui::GetFont();
+            float bigSize = font->FontSize * 2.0f;
+
+            // line 1: "JB OVERLAY v5 CALISIYOR"
+            const char* title = "JB OVERLAY v5 CALISIYOR";
+            dl->AddRectFilled(ImVec2(10, 10), ImVec2(600, 110), IM_COL32(0, 0, 0, 200), 8.f);
+            dl->AddRect(ImVec2(10, 10), ImVec2(600, 110), IM_COL32(0, 255, 0, 255), 8.f, 0, 2.f);
+            dl->AddText(font, bigSize, ImVec2(20, 15), IM_COL32(0, 255, 0, 255), title);
+
+            // line 2: attach status
+            ImU32 statusCol = diagAttached ? IM_COL32(0, 255, 0, 255) : IM_COL32(255, 50, 50, 255);
+            dl->AddText(font, font->FontSize * 1.5f, ImVec2(20, 55), statusCol, diagLine1);
+
+            // line 3: error details
+            if (diagLine2[0])
+                dl->AddText(font, font->FontSize * 1.2f, ImVec2(20, 82), IM_COL32(255, 255, 0, 255), diagLine2);
+        }
 
         ImGui::Render();
         g_dx.context->OMSetRenderTargets(1, &g_dx.rtv, nullptr);
