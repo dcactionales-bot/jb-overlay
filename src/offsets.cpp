@@ -70,6 +70,7 @@ bool LoadOffsets(const std::string& path, Offsets& out) {
         if (key == "healthValue")   { out.healthValue   = ParseHex(val); continue; }
         if (key == "healthMax")     { out.healthMax     = ParseHex(val); continue; }
         if (key == "healthIsFloat") { out.healthIsFloat = (val == "true" || val == "1"); continue; }
+        if (key == "healthIsPrimitive") { out.healthIsPrimitive = (val == "true" || val == "1"); continue; }
 
         // Name slots
         if (key == "bmSlots")      { out.bmSlots      = ParseHex(val); continue; }
@@ -149,7 +150,8 @@ bool SaveDefaultOffsets(const std::string& path) {
     f << "pmHealth      = 0x1B0\n";
     f << "healthValue   = 0x10\n";
     f << "healthMax     = 0x20\n";
-    f << "healthIsFloat = true\n\n";
+    f << "healthIsFloat = true\n";
+    f << "healthIsPrimitive = false\n\n";
 
     f << "# --- Name slots ---\n";
     f << "bmSlots      = 0x4D0\n";

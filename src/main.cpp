@@ -331,7 +331,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         Stage("[config] loaded offsets.cfg");
     else {
         cfg::SaveDefaultOffsets(cfgPath);
-        Stage("[config] created default offsets.cfg - fill in values and restart");
+        if (cfg::LoadOffsets(cfgPath, offsets))
+            Stage("[config] created and loaded default offsets.cfg");
+        else
+            Stage("[config] created default offsets.cfg but load failed — check file");
     }
 
     std::string settingsPath(exePath);

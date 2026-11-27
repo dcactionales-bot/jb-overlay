@@ -449,13 +449,21 @@ bool Esp::Update() {
             uintptr_t priv = rd(server + off_.cmPrivateModel);
             uintptr_t hp = priv ? rd(priv + off_.pmHealth) : 0;
             if (hp) {
-                if (off_.healthIsFloat) {
-                    e.health    = static_cast<int>(proc_.Read<float>(hp + off_.healthValue).value_or(100.f));
-                    e.maxHealth = static_cast<int>(proc_.Read<float>(hp + off_.healthMax).value_or(100.f));
-                } else {
-                    e.health    = proc_.Read<int32_t>(hp + off_.healthValue).value_or(100);
-                    e.maxHealth = proc_.Read<int32_t>(hp + off_.healthMax).value_or(100);
-                }
+                auto readHpVal = [&](uintptr_t base) -> float {
+                    if (off_.healthIsPrimitive) {
+                        uintptr_t pd = rd(base);
+                        uintptr_t pv = pd ? rd(pd + off_.primitiveData) : 0;
+                        if (!pv) return 100.f;
+                        if (off_.healthIsFloat)
+                            return proc_.Read<float>(pv + off_.primitiveValue).value_or(100.f);
+                        return static_cast<float>(proc_.Read<int32_t>(pv + off_.primitiveValue).value_or(100));
+                    }
+                    if (off_.healthIsFloat)
+                        return proc_.Read<float>(base).value_or(100.f);
+                    return static_cast<float>(proc_.Read<int32_t>(base).value_or(100));
+                };
+                e.health    = static_cast<int>(readHpVal(hp + off_.healthValue));
+                e.maxHealth = static_cast<int>(readHpVal(hp + off_.healthMax));
             }
         }
         if (!e.alive) e.health = 0;

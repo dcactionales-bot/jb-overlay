@@ -39,6 +39,7 @@ struct Offsets {
     uintptr_t healthValue   = 0x10;
     uintptr_t healthMax     = 0x20;
     bool      healthIsFloat = true;
+    bool      healthIsPrimitive = false;
 
     // === Name reading from slots (all 0 = skip) ===
     uintptr_t bmSlots      = 0;  // BattleModel → BattleCharacterSlotsModel
