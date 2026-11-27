@@ -184,7 +184,6 @@ Esp::Esp(const mem::Process& proc, cfg::Offsets& off) : proc_(proc), off_(off) {
                static_cast<float>(GetSystemMetrics(SM_CYSCREEN))};
     lastUpdate_ = std::chrono::steady_clock::now();
     running_.store(true);
-    scanThread_ = std::thread(&Esp::ScanLoop, this);
 }
 
 Esp::~Esp() {
@@ -193,30 +192,34 @@ Esp::~Esp() {
 }
 
 void Esp::ScanLoop() {
-    std::mt19937 rng(static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::uniform_int_distribution<uint64_t> jitter(0, kJitterMs);
+    try {
+        std::mt19937 rng(static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::uniform_int_distribution<uint64_t> jitter(0, kJitterMs);
 
-    while (running_.load()) {
-        bool walked = false;
-        if (gmAddr_.load() == 0) {
-            uintptr_t gm = (off_.battleModelTypeInfo != 0)
-                ? ScanGameManager()
-                : ScanGameManagerByName();
-            if (gm) gmAddr_.store(gm);
-            walked = true;
-        }
-        if (walked) std::this_thread::sleep_for(std::chrono::milliseconds(kScanGapMs + jitter(rng)));
-        if (running_.load() && viewAddr_.load() == 0 && haveLocal_.load()) {
-            Vec3 local{localX_.load(), localY_.load(), localZ_.load()};
-            bool t = false;
-            if (uintptr_t va = ScanViewMatrix(local, t)) {
-                viewTFound_.store(t);
-                viewAddr_.store(va);
+        while (running_.load()) {
+            bool walked = false;
+            if (gmAddr_.load() == 0) {
+                uintptr_t gm = (off_.battleModelTypeInfo != 0)
+                    ? ScanGameManager()
+                    : ScanGameManagerByName();
+                if (gm) gmAddr_.store(gm);
+                walked = true;
             }
-            walked = true;
+            if (walked) std::this_thread::sleep_for(std::chrono::milliseconds(kScanGapMs + jitter(rng)));
+            if (running_.load() && viewAddr_.load() == 0 && haveLocal_.load()) {
+                Vec3 local{localX_.load(), localY_.load(), localZ_.load()};
+                bool t = false;
+                if (uintptr_t va = ScanViewMatrix(local, t)) {
+                    viewTFound_.store(t);
+                    viewAddr_.store(va);
+                }
+                walked = true;
+            }
+            if (gmAddr_.load() && viewAddr_.load()) { scanDone_.store(true); return; }
+            std::this_thread::sleep_for(std::chrono::milliseconds((walked ? kRescanGapMs : 50) + jitter(rng)));
         }
-        if (gmAddr_.load() && viewAddr_.load()) { scanDone_.store(true); return; }
-        std::this_thread::sleep_for(std::chrono::milliseconds((walked ? kRescanGapMs : 50) + jitter(rng)));
+    } catch (...) {
+        scanDone_.store(true);
     }
 }
 
@@ -353,6 +356,10 @@ uintptr_t Esp::ScanViewMatrix(const Vec3& local, bool& transposed) const {
 // ============================================================
 
 bool Esp::Update() {
+    if (!scanThread_.joinable() && running_.load()) {
+        try { scanThread_ = std::thread(&Esp::ScanLoop, this); } catch (...) {}
+    }
+    EnsureScanThread();
     entities_.clear();
     localOrigin_ = {};
 
