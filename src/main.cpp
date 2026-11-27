@@ -526,11 +526,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             static int failCount = 0;
             if (!attached) {
                 ++failCount;
-                if (failCount == 5) {
-                    Stage("[attach] game not found after 5 tries — scanning processes...");
+                if (failCount == 1 || failCount == 5) {
+                    Stage("--------------------------------------------");
+                    Stage("  OYUN BULUNAMADI — process taranıyor...");
+                    Stage("--------------------------------------------");
                     ScanRunningProcesses();
-                    Stage("[attach] if the game exe is listed above with a different name,");
-                    Stage("[attach] add 'targetProcess = ExeName.exe' to offsets.cfg and press F5");
+                    Stage("  Yukardaki listede ROB RUN varsa EAC engelliyor.");
+                    Stage("  Yoksa oyun henuz acilmamis.");
+                    Stage("--------------------------------------------");
                 }
             } else {
                 failCount = 0;
@@ -552,12 +555,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             }
         }
 
-        // periodic status every 3 seconds
+        // periodic status every 5 seconds
         if (GetTickCount64() >= nextStatusMs) {
-            Stage("[durum] oyun: %s | esp: %s | F1=esp ac/kapa | INS=menu",
-                  proc ? "BAGLI" : "BEKLENIYOR...",
-                  espActive ? "ACIK" : "KAPALI");
-            nextStatusMs = GetTickCount64() + 3000;
+            if (proc)
+                Stage("[durum] oyun: BAGLI | esp: %s", espActive ? "ACIK — F1 ile kapat" : "KAPALI — F1 bas!");
+            else
+                Stage("[durum] oyun: BEKLENIYOR... | Oyunu ac, sonra F1 bas");
+            nextStatusMs = GetTickCount64() + 5000;
         }
 
         // update ESP state only when active
