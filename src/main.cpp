@@ -305,6 +305,16 @@ void RelaunchAsAdmin() {
 
 }  // namespace
 
+LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ep) {
+    Stage("[CRASH] exception 0x%08X at 0x%p",
+          ep->ExceptionRecord->ExceptionCode,
+          ep->ExceptionRecord->ExceptionAddress);
+    Stage("[CRASH] press Enter to close");
+    FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+    getchar();
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     if (!IsAdmin()) {
         RelaunchAsAdmin();
@@ -316,7 +326,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     freopen_s(&fDummy, "CONOUT$", "w", stdout);
     freopen_s(&fDummy, "CONOUT$", "w", stderr);
     SetConsoleTitleA("jb overlay");
-    Stage("[boot] starting (admin: yes)");
+    SetUnhandledExceptionFilter(CrashHandler);
+    Stage("[boot] starting v2 (admin: yes)");
     EnableDebugPriv();
     Stage("[boot] SeDebugPrivilege enabled");
 
@@ -409,8 +420,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     ImGui_ImplDX11_Init(g_dx.device, g_dx.context);
     Stage("[imgui] ready");
 
+    Stage("[init] creating process handler...");
     mem::Process proc;
+    Stage("[init] creating ESP...");
     esp::Esp esp(proc, offsets);
+    Stage("[init] ESP created OK");
     if (esp.LoadSettings(settingsPath))
         Stage("[config] loaded settings.ini");
     ULONGLONG nextAttachMs = 0;
@@ -421,7 +435,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     HWND gameWindow = nullptr;
     const float clear[4] = {0.f, 0.f, 0.f, 0.f};
 
-    Stage("[ready] F1: activate | INS: menu | END: exit");
+    Stage("[ready] v2 — F1: activate | INS: menu | END: exit");
     while (running) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
