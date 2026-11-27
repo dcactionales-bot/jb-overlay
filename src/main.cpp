@@ -250,6 +250,11 @@ void Apply() {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
+    AllocConsole();
+    FILE* fDummy;
+    freopen_s(&fDummy, "CONOUT$", "w", stdout);
+    freopen_s(&fDummy, "CONOUT$", "w", stderr);
+    SetConsoleTitleA("jb overlay");
     Stage("[boot] starting");
 
     cfg::Offsets offsets;
@@ -475,5 +480,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     UnregisterClassW(className, hInstance);
 
     Stage("[exit] clean");
+    FreeConsole();
     return 0;
 }
