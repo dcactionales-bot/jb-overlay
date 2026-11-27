@@ -372,7 +372,8 @@ bool Esp::Update() {
     int localRole = -1;
     if (localServer && off_.cmRole) {
         uintptr_t rp = rd(localServer + off_.cmRole);
-        if (rp) localRole = proc_.Read<int32_t>(rp + off_.primitiveValue).value_or(-1);
+        uintptr_t pd = rp ? rd(rp + off_.primitiveData) : 0;
+        if (pd) localRole = proc_.Read<int32_t>(pd + off_.primitiveValue).value_or(-1);
     }
 
     if (localServer && off_.cmTransform) {
@@ -412,6 +413,7 @@ bool Esp::Update() {
 
         Entity e;
         e.address = server;
+        if (off_.cmId) e.id = proc_.Read<int32_t>(server + off_.cmId).value_or(-1);
         e.origin.x = proc_.Read<float>(tx + off_.txX).value_or(0);
         e.origin.y = proc_.Read<float>(tx + off_.txY).value_or(0);
         e.origin.z = proc_.Read<float>(tx + off_.txZ).value_or(0);
@@ -419,7 +421,8 @@ bool Esp::Update() {
 
         if (off_.cmIsDead) {
             uintptr_t dp = rd(server + off_.cmIsDead);
-            if (dp) e.alive = proc_.Read<uint8_t>(dp + off_.primitiveValue).value_or(0) == 0;
+            uintptr_t pd = dp ? rd(dp + off_.primitiveData) : 0;
+            if (pd) e.alive = proc_.Read<uint8_t>(pd + off_.primitiveValue).value_or(0) == 0;
         }
 
         bool isLocal = (localServer != 0 && server == localServer);
@@ -431,7 +434,8 @@ bool Esp::Update() {
             int role = -1;
             if (off_.cmRole) {
                 uintptr_t rp = rd(server + off_.cmRole);
-                if (rp) role = proc_.Read<int32_t>(rp + off_.primitiveValue).value_or(-1);
+                uintptr_t pd = rp ? rd(rp + off_.primitiveData) : 0;
+                if (pd) role = proc_.Read<int32_t>(pd + off_.primitiveValue).value_or(-1);
             }
             if (localRole >= 0 && role == localRole)
                 e.role = Role::Teammate;
@@ -441,8 +445,9 @@ bool Esp::Update() {
                 e.role = Role::Neutral;
         }
 
-        if (off_.cmHealth) {
-            uintptr_t hp = rd(server + off_.cmHealth);
+        if (off_.cmPrivateModel && off_.pmHealth) {
+            uintptr_t priv = rd(server + off_.cmPrivateModel);
+            uintptr_t hp = priv ? rd(priv + off_.pmHealth) : 0;
             if (hp) {
                 if (off_.healthIsFloat) {
                     e.health    = static_cast<int>(proc_.Read<float>(hp + off_.healthValue).value_or(100.f));
@@ -469,6 +474,39 @@ bool Esp::Update() {
     }
 
     if (!haveLocal) { entities_.clear(); return false; }
+
+    // name reading from slot table
+    if (off_.bmSlots && off_.slotsArray && off_.slotNickname && off_.slotData && off_.slotEntityId) {
+        uintptr_t slotsModel = rd(bm + off_.bmSlots);
+        uintptr_t slotsList = slotsModel ? rd(slotsModel + off_.slotsArray) : 0;
+        if (slotsList) {
+            uintptr_t items = rd(slotsList + 0x10);
+            int sc = proc_.Read<int32_t>(slotsList + 0x18).value_or(0);
+            if (items && sc > 0 && sc < 512) {
+                for (int s = 0; s < sc; ++s) {
+                    uintptr_t slot = proc_.Read<uintptr_t>(items + off_.arrayData + static_cast<uintptr_t>(s) * 8).value_or(0);
+                    if (!slot) continue;
+                    uintptr_t data = rd(slot + off_.slotData);
+                    if (!data) continue;
+                    int eid = proc_.Read<int32_t>(data + off_.slotEntityId).value_or(-1);
+                    if (eid < 0) continue;
+                    uintptr_t nick = rd(data + off_.slotNickname);
+                    if (!nick) continue;
+                    int len = proc_.Read<int32_t>(nick + 0x10).value_or(0);
+                    if (len <= 0 || len > 15) continue;
+                    wchar_t wb[16]{};
+                    if (!proc_.ReadBuf(nick + 0x14, wb, static_cast<size_t>(len) * 2)) continue;
+                    for (auto& e : entities_) {
+                        if (e.id == eid && e.name[0] == '\0') {
+                            for (int c = 0; c < len && c < 31; ++c)
+                                e.name[c] = static_cast<char>(wb[c] < 128 ? wb[c] : '?');
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // velocity estimation
     auto now = std::chrono::steady_clock::now();

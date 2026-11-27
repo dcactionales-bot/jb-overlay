@@ -20,28 +20,33 @@ struct Offsets {
     uintptr_t entityServerModel = 0;  // BattleCharacterEntityModel → ServerModel
 
     // === Step 5: BattleCharacterModel fields (all pointer indirection) ===
-    uintptr_t cmTransform = 0;  // → CharacterTransformModel*
-    uintptr_t cmIsDead    = 0;  // → IPrimitiveModel<bool>*
-    uintptr_t cmRole      = 0;  // → IPrimitiveModel<PlayerRole>*
-    uintptr_t cmHealth    = 0;  // → health component* (0 = skip)
+    uintptr_t cmTransform    = 0;  // → CharacterTransformModel*
+    uintptr_t cmIsDead       = 0;  // → IPrimitiveModel<bool>*
+    uintptr_t cmRole         = 0;  // → IPrimitiveModel<PlayerRole>*
+    uintptr_t cmPrivateModel = 0;  // → BattleCharacterPrivateModel* (0 = skip health)
 
     // === Step 6: CharacterTransformModel fields ===
     uintptr_t txX = 0x10;
     uintptr_t txY = 0x14;
     uintptr_t txZ = 0x18;
 
-    // === Step 7: IPrimitiveModel<T> → value offset ===
-    uintptr_t primitiveValue = 0x10;
+    // === Step 7: IPrimitiveModel<T> double dereference ===
+    uintptr_t primitiveData  = 0x10;  // PrimitiveModel → _data (PrimitiveData*)
+    uintptr_t primitiveValue = 0x18;  // PrimitiveData → value
 
-    // === Health component fields (used only if cmHealth != 0) ===
+    // === Health (via PrivateModel, used only if cmPrivateModel != 0) ===
+    uintptr_t pmHealth      = 0;     // BattleCharacterPrivateModel → HealthModel*
     uintptr_t healthValue   = 0x10;
-    uintptr_t healthMax     = 0x14;
-    bool      healthIsFloat = false;
+    uintptr_t healthMax     = 0x20;
+    bool      healthIsFloat = true;
 
     // === Name reading from slots (all 0 = skip) ===
-    uintptr_t beSlots      = 0;  // BattleEntitiesModel → BattleCharacterSlotsModel
-    uintptr_t slotsDict    = 0;  // → _slots Dictionary<int, BattleCharacterSlotModel>
-    uintptr_t slotNickname = 0;  // BattleCharacterSlotModel → Nickname (C# string)
+    uintptr_t bmSlots      = 0;  // BattleModel → BattleCharacterSlotsModel
+    uintptr_t slotsArray   = 0;  // BattleCharacterSlotsModel → Slots (list)
+    uintptr_t slotNickname = 0;  // BattleCharacterSlotData → Nickname (C# string)
+    uintptr_t slotData     = 0;  // BattleCharacterSlotModel → _data
+    uintptr_t slotEntityId = 0;  // BattleCharacterSlotData → EntityId
+    uintptr_t cmId         = 0;  // BattleCharacterModel → Id
 
     // === C# Dictionary<K,V> internals (rarely change) ===
     uintptr_t dictEntries    = 0x18;

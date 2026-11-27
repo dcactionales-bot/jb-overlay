@@ -22,6 +22,7 @@ constexpr size_t kRoleCount = 4;
 
 struct Entity {
     uintptr_t address = 0;
+    int  id = -1;
     Vec3 origin{}, head{};
     Vec3 velocity{};
     int  health = 0, maxHealth = 100;

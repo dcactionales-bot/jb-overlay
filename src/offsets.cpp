@@ -51,28 +51,33 @@ bool LoadOffsets(const std::string& path, Offsets& out) {
         if (key == "entityServerModel") { out.entityServerModel = ParseHex(val); continue; }
 
         // BattleCharacterModel fields
-        if (key == "cmTransform") { out.cmTransform = ParseHex(val); continue; }
-        if (key == "cmIsDead")    { out.cmIsDead    = ParseHex(val); continue; }
-        if (key == "cmRole")      { out.cmRole      = ParseHex(val); continue; }
-        if (key == "cmHealth")    { out.cmHealth    = ParseHex(val); continue; }
+        if (key == "cmTransform")    { out.cmTransform    = ParseHex(val); continue; }
+        if (key == "cmIsDead")       { out.cmIsDead       = ParseHex(val); continue; }
+        if (key == "cmRole")         { out.cmRole         = ParseHex(val); continue; }
+        if (key == "cmPrivateModel") { out.cmPrivateModel = ParseHex(val); continue; }
 
         // Transform position
         if (key == "txX") { out.txX = ParseHex(val); continue; }
         if (key == "txY") { out.txY = ParseHex(val); continue; }
         if (key == "txZ") { out.txZ = ParseHex(val); continue; }
 
-        // IPrimitiveModel value
+        // IPrimitiveModel double deref
+        if (key == "primitiveData")  { out.primitiveData  = ParseHex(val); continue; }
         if (key == "primitiveValue") { out.primitiveValue = ParseHex(val); continue; }
 
-        // Health component
+        // Health (via PrivateModel)
+        if (key == "pmHealth")      { out.pmHealth      = ParseHex(val); continue; }
         if (key == "healthValue")   { out.healthValue   = ParseHex(val); continue; }
-        if (key == "healthMax")     { out.healthMax      = ParseHex(val); continue; }
-        if (key == "healthIsFloat") { out.healthIsFloat  = (val == "true" || val == "1"); continue; }
+        if (key == "healthMax")     { out.healthMax     = ParseHex(val); continue; }
+        if (key == "healthIsFloat") { out.healthIsFloat = (val == "true" || val == "1"); continue; }
 
         // Name slots
-        if (key == "beSlots")      { out.beSlots      = ParseHex(val); continue; }
-        if (key == "slotsDict")    { out.slotsDict    = ParseHex(val); continue; }
+        if (key == "bmSlots")      { out.bmSlots      = ParseHex(val); continue; }
+        if (key == "slotsArray")   { out.slotsArray   = ParseHex(val); continue; }
         if (key == "slotNickname") { out.slotNickname = ParseHex(val); continue; }
+        if (key == "slotData")     { out.slotData     = ParseHex(val); continue; }
+        if (key == "slotEntityId") { out.slotEntityId = ParseHex(val); continue; }
+        if (key == "cmId")         { out.cmId         = ParseHex(val); continue; }
 
         // Dictionary internals
         if (key == "dictEntries")    { out.dictEntries    = ParseHex(val); continue; }
@@ -97,83 +102,67 @@ bool SaveDefaultOffsets(const std::string& path) {
     std::ofstream f(path);
     if (!f.is_open()) return false;
 
-    f << "# ROB RUN offsets config\n";
-    f << "# Data chain: BattleModel -> BattleEntitiesModel -> entity models\n";
-    f << "#   -> BattleCharacterModel -> Transform/IsDead/Role\n";
-    f << "# All hex values use 0x prefix.  F5 to hot-reload.\n";
-    f << "#\n";
-    f << "# IMPORTANT: offsets below 0x0 are PLACEHOLDERS.\n";
-    f << "# Run tools/calc_offsets.ps1 on Cpp2IL dummy DLLs to compute them.\n";
-    f << "# If positions look wrong, nudge suspect offset by +/-0x08 and F5.\n";
-    f << "\n";
+    f << "# ROB RUN offsets — Build 26509119\n";
+    f << "# Chain: BattleModel -> BattleEntitiesModel -> entity -> BattleCharacterModel\n";
+    f << "# F5 to hot-reload.\n\n";
 
-    f << "# --- Step 1: BattleModel TypeInfo (0 = auto-detect by class name) ---\n";
-    f << "battleModelTypeInfo = 0x0\n";
-    f << "\n";
+    f << "# --- BattleModel TypeInfo RVA in GameAssembly.dll ---\n";
+    f << "battleModelTypeInfo = 0x82496E8\n\n";
 
-    f << "# --- Step 2: BattleModel -> BattleEntitiesModel ---\n";
-    f << "bmEntities = 0x0\n";
-    f << "\n";
+    f << "# --- BattleModel -> BattleEntitiesModel ---\n";
+    f << "bmEntities = 0x90\n\n";
 
-    f << "# --- Step 3: BattleEntitiesModel ---\n";
-    f << "bePlayer = 0x0\n";
-    f << "beModels = 0x0\n";
-    f << "\n";
+    f << "# --- BattleEntitiesModel ---\n";
+    f << "bePlayer = 0xD0\n";
+    f << "beModels = 0xE0\n\n";
 
-    f << "# --- Step 4: entity model -> BattleCharacterModel ---\n";
-    f << "# PlayerEntityModel.ServerModel offset (for local player)\n";
-    f << "localServerModel  = 0x0\n";
-    f << "# BattleCharacterEntityModel.ServerModel offset (for all chars)\n";
-    f << "entityServerModel = 0x0\n";
-    f << "\n";
+    f << "# --- entity -> BattleCharacterModel (ServerModel) ---\n";
+    f << "localServerModel  = 0x20\n";
+    f << "entityServerModel = 0x28\n\n";
 
-    f << "# --- Step 5: BattleCharacterModel fields ---\n";
-    f << "# All are pointers to sub-objects; read the pointer, then the value\n";
-    f << "cmTransform = 0x0\n";
-    f << "cmIsDead    = 0x0\n";
-    f << "cmRole      = 0x0\n";
-    f << "cmHealth    = 0x0\n";
-    f << "\n";
+    f << "# --- BattleCharacterModel fields ---\n";
+    f << "cmTransform    = 0x58\n";
+    f << "cmIsDead       = 0xF0\n";
+    f << "cmRole         = 0x208\n";
+    f << "cmPrivateModel = 0x10\n";
+    f << "cmId           = 0x38\n\n";
 
-    f << "# --- Step 6: CharacterTransformModel -> XYZ ---\n";
+    f << "# --- CharacterTransformModel -> XYZ ---\n";
     f << "txX = 0x10\n";
     f << "txY = 0x14\n";
-    f << "txZ = 0x18\n";
-    f << "\n";
+    f << "txZ = 0x18\n\n";
 
-    f << "# --- Step 7: IPrimitiveModel<T> -> value ---\n";
-    f << "# IsDead and Role are wrapped in IPrimitiveModel, need extra deref\n";
-    f << "primitiveValue = 0x10\n";
-    f << "\n";
+    f << "# --- IPrimitiveModel<T> double deref ---\n";
+    f << "# PrimitiveModel._data -> PrimitiveData.value\n";
+    f << "primitiveData  = 0x10\n";
+    f << "primitiveValue = 0x18\n\n";
 
-    f << "# --- Health (optional, 0 = skip health bars) ---\n";
+    f << "# --- Health (PrivateModel -> HealthModel) ---\n";
+    f << "pmHealth      = 0x1B0\n";
     f << "healthValue   = 0x10\n";
-    f << "healthMax     = 0x14\n";
-    f << "healthIsFloat = false\n";
-    f << "\n";
+    f << "healthMax     = 0x20\n";
+    f << "healthIsFloat = true\n\n";
 
-    f << "# --- Name slots (optional, all 0 = skip names) ---\n";
-    f << "beSlots      = 0x0\n";
-    f << "slotsDict    = 0x0\n";
-    f << "slotNickname = 0x0\n";
-    f << "\n";
+    f << "# --- Name slots ---\n";
+    f << "bmSlots      = 0x4D0\n";
+    f << "slotsArray   = 0x18\n";
+    f << "slotData     = 0x10\n";
+    f << "slotEntityId = 0x20\n";
+    f << "slotNickname = 0x30\n\n";
 
-    f << "# --- C# Dictionary internals (usually don't change) ---\n";
+    f << "# --- C# internals ---\n";
     f << "dictEntries    = 0x18\n";
     f << "dictCount      = 0x20\n";
     f << "dictEntrySize  = 0x18\n";
     f << "dictEntryValue = 0x10\n";
-    f << "arrayData      = 0x20\n";
-    f << "\n";
+    f << "arrayData      = 0x20\n\n";
 
     f << "# --- Gameplay tuning ---\n";
     f << "metersPerUnit = 1.0\n";
     f << "headHeight    = 1.75\n";
-    f << "playerHeight  = 1.8\n";
-    f << "\n";
+    f << "playerHeight  = 1.8\n\n";
 
     f << "# --- PlayerRole enum ---\n";
-    f << "# None=0, Citizen=1, Prisoner=2, Robber=3, Cop=4, Settler=5\n";
     f << "copRole    = 4\n";
     f << "robberRole = 3\n";
 
