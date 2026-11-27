@@ -498,8 +498,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                         Stage("*** OYUN BULUNDU VE BAGLANDI! pid=%lu ***", static_cast<unsigned long>(pid));
                         attached = true;
                     } else {
-                        Stage("!!! OYUN BULUNDU AMA BAGLANAMADI — EAC ENGELLIYOR !!!");
-                        Stage("!!! OpenProcess FAILED pid=%lu !!!", static_cast<unsigned long>(pid));
+                        bool canQuery = mem::Process::CanQueryOnly(pid);
+                        Stage("!!! OYUN BULUNDU AMA BAGLANAMADI !!! pid=%lu", static_cast<unsigned long>(pid));
+                        Stage("!!! NtStatus=0x%08X WinErr=%lu QueryOnly=%s",
+                              static_cast<unsigned>(proc.LastNtStatus()),
+                              static_cast<unsigned long>(proc.LastWinError()),
+                              canQuery ? "EVET(EAC VM_READ engelliyor)" : "HAYIR(tamamen engelli)");
                     }
                 }
             }
@@ -519,8 +523,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                             attached = true;
                             break;
                         } else {
-                            Stage("!!! OYUN BULUNDU: %s pid=%lu AMA BAGLANAMADI !!!", t.label, static_cast<unsigned long>(pid));
-                            Stage("!!! EAC OpenProcess ENGELLIYOR — kernel driver lazim !!!");
+                            bool canQuery = mem::Process::CanQueryOnly(pid);
+                            Stage("!!! %s pid=%lu BAGLANAMADI !!!", t.label, static_cast<unsigned long>(pid));
+                            Stage("!!! NtStatus=0x%08X WinErr=%lu QueryOnly=%s",
+                                  static_cast<unsigned>(proc.LastNtStatus()),
+                                  static_cast<unsigned long>(proc.LastWinError()),
+                                  canQuery ? "EVET(EAC VM_READ engelliyor)" : "HAYIR(tamamen engelli)");
                         }
                     }
                 }
@@ -528,14 +536,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             static int failCount = 0;
             if (!attached) {
                 ++failCount;
-                if (failCount == 1 || failCount == 5) {
-                    Stage("--------------------------------------------");
-                    Stage("  OYUN BULUNAMADI — process taranıyor...");
-                    Stage("--------------------------------------------");
+                if (failCount <= 3) {
+                    Stage("--- OYUN BULUNAMADI (deneme %d) — process listesi:", failCount);
                     ScanRunningProcesses();
-                    Stage("  Yukardaki listede ROB RUN varsa EAC engelliyor.");
-                    Stage("  Yoksa oyun henuz acilmamis.");
-                    Stage("--------------------------------------------");
+                    Stage("--- ROB RUN listede varsa: EAC engelliyor. Yoksa: oyun acilmamis.");
                 }
             } else {
                 failCount = 0;

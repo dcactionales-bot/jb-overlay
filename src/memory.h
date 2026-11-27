@@ -45,6 +45,11 @@ public:
     void Close() noexcept;
     bool Alive() const noexcept;
 
+    LONG  LastNtStatus() const noexcept { return lastNt_; }
+    DWORD LastWinError() const noexcept { return lastWin_; }
+    // tries QUERY_LIMITED only — returns true if EAC allows that but blocks VM_READ
+    static bool CanQueryOnly(DWORD pid);
+
     // true only when the full range was read.
     bool ReadBuf(uintptr_t addr, void* dst, size_t size) const noexcept;
 
@@ -77,6 +82,8 @@ private:
 
     HANDLE h_   = nullptr;
     DWORD  pid_ = 0;
+    LONG   lastNt_  = 0;
+    DWORD  lastWin_ = 0;
 };
 
 }  // namespace mem

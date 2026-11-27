@@ -119,6 +119,7 @@ DWORD Process::FindPid(std::wstring_view exe) {
 
 bool Process::Attach(DWORD pid) {
     Close();
+    lastNt_ = 0; lastWin_ = 0;
     if (pid == 0) return false;
 
     if (sc::g_sc.ready) {
@@ -126,15 +127,23 @@ bool Process::Attach(DWORD pid) {
         sc::ObjAttr oa{}; oa.length = sizeof(oa);
         sc::ClientId cid{}; cid.uniqueProcess = reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(pid));
         LONG status = sc::g_sc.openProc(&h, PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION, &oa, &cid);
+        lastNt_ = status;
         if (status >= 0 && h) { h_ = h; pid_ = pid; return true; }
-        // syscall failed — try WinAPI fallback
     }
 
+    SetLastError(0);
     HANDLE h = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    lastWin_ = GetLastError();
     if (!h) return false;
     h_ = h;
     pid_ = pid;
     return true;
+}
+
+bool Process::CanQueryOnly(DWORD pid) {
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (h) { CloseHandle(h); return true; }
+    return false;
 }
 
 bool Process::Attach(std::wstring_view exe) {
