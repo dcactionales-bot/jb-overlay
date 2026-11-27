@@ -429,17 +429,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         Stage("[config] loaded settings.ini");
     ULONGLONG nextAttachMs = 0;
 
-    bool espActive = false;
+    bool espActive = true;
     bool menuOpen  = false;
     bool running   = true;
     HWND gameWindow = nullptr;
     const float clear[4] = {0.f, 0.f, 0.f, 0.f};
 
-    Stage("[ready] v3 — F1: activate | INS: menu | END: exit");
-    Stage("--------------------------------------------");
-    Stage("  EXE acildi. Oyunu ac, sonra F1 bas.");
-    Stage("  Konsolu acik birak, durum buraya yazilacak.");
-    Stage("--------------------------------------------");
+    Stage("[ready] v4 — INS: menu | END: exit | F1: esp ac/kapa");
+    Stage("============================================");
+    Stage("  ESP OTOMATIK ACIK. OYUNU AC, BEKLE.");
+    Stage("  Oyun bulununca otomatik baglanacak.");
+    Stage("============================================");
     ULONGLONG nextStatusMs = 0;
     while (running) {
         MSG msg;
@@ -495,10 +495,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                 DWORD pid = mem::Process::FindPid(offsets.targetProcess);
                 if (pid) {
                     if (proc.Attach(pid)) {
-                        Stage("[attach] found game via config (pid %lu)", static_cast<unsigned long>(pid));
+                        Stage("*** OYUN BULUNDU VE BAGLANDI! pid=%lu ***", static_cast<unsigned long>(pid));
                         attached = true;
                     } else {
-                        Stage("[attach] pid %lu found but OpenProcess FAILED (EAC?)", static_cast<unsigned long>(pid));
+                        Stage("!!! OYUN BULUNDU AMA BAGLANAMADI — EAC ENGELLIYOR !!!");
+                        Stage("!!! OpenProcess FAILED pid=%lu !!!", static_cast<unsigned long>(pid));
                     }
                 }
             }
@@ -514,11 +515,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
                     DWORD pid = mem::Process::FindPid(t.name);
                     if (pid) {
                         if (proc.Attach(pid)) {
-                            Stage("[attach] found game '%s' (pid %lu)", t.label, static_cast<unsigned long>(pid));
+                            Stage("*** OYUN BULUNDU: %s pid=%lu — BAGLANDI! ***", t.label, static_cast<unsigned long>(pid));
                             attached = true;
                             break;
                         } else {
-                            Stage("[attach] '%s' pid %lu found but OpenProcess FAILED (EAC blocking?)", t.label, static_cast<unsigned long>(pid));
+                            Stage("!!! OYUN BULUNDU: %s pid=%lu AMA BAGLANAMADI !!!", t.label, static_cast<unsigned long>(pid));
+                            Stage("!!! EAC OpenProcess ENGELLIYOR — kernel driver lazim !!!");
                         }
                     }
                 }
