@@ -365,7 +365,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
     HWND hwnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         className, L"", WS_POPUP, 0, 0, screenW, screenH,
         nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) { Stage("[window] create failed"); UnregisterClassW(className, hInstance); return 1; }
@@ -428,9 +428,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             TranslateMessage(&msg); DispatchMessageW(&msg);
             if (msg.message == WM_QUIT) running = false;
         }
-        if (!running) break;
+        if (!running) { Stage("[exit] WM_QUIT received"); break; }
 
-        if (GetAsyncKeyState(VK_END) & 1) break;
+        if (GetAsyncKeyState(VK_END) & 1) { Stage("[exit] END key pressed"); break; }
         if (GetAsyncKeyState(VK_INSERT) & 1) { menuOpen = !menuOpen; SetClickThrough(hwnd, !menuOpen); }
 
         // F1: toggle ESP activation
@@ -464,7 +464,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
             CleanupRenderTarget();
             g_dx.swapChain->ResizeBuffers(0, g_resizeW, g_resizeH, DXGI_FORMAT_UNKNOWN, 0);
             g_resizeW = g_resizeH = 0;
-            if (!CreateRenderTarget()) break;
+            if (!CreateRenderTarget()) { Stage("[exit] CreateRenderTarget failed after resize"); break; }
         }
 
         // process attach/detach
@@ -573,8 +573,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         g_dx.context->ClearRenderTargetView(g_dx.rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-        HRESULT hr = g_dx.swapChain->Present(1, 0);
-        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) break;
+        HRESULT hr = g_dx.swapChain->Present(0, 0);
+        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
+            Stage("[dx11] device lost (0x%08X) — rebuilding...", static_cast<unsigned>(hr));
+            ImGui_ImplDX11_Shutdown();
+            ImGui_ImplWin32_Shutdown();
+            CleanupDevice();
+            Sleep(1000);
+            if (!CreateDevice(hwnd)) {
+                Stage("[exit] device rebuild failed — exiting");
+                break;
+            }
+            ImGui_ImplWin32_Init(hwnd);
+            ImGui_ImplDX11_Init(g_dx.device, g_dx.context);
+            Stage("[dx11] device rebuilt OK");
+            continue;
+        }
     }
 
     esp.SaveSettings(settingsPath);
@@ -587,7 +601,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     DestroyWindow(hwnd);
     UnregisterClassW(className, hInstance);
 
-    Stage("[exit] clean");
+    Stage("[exit] clean — press Enter to close console");
+    FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+    getchar();
     FreeConsole();
     return 0;
 }
