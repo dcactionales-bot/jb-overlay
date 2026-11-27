@@ -658,20 +658,30 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         {
             ImFont* font = ImGui::GetFont();
             float bigSize = font->FontSize * 2.0f;
+            float boxH = 130.f;
 
-            // line 1: "JB OVERLAY v5 CALISIYOR"
-            const char* title = "JB OVERLAY v5 CALISIYOR";
-            dl->AddRectFilled(ImVec2(10, 10), ImVec2(600, 110), IM_COL32(0, 0, 0, 200), 8.f);
-            dl->AddRect(ImVec2(10, 10), ImVec2(600, 110), IM_COL32(0, 255, 0, 255), 8.f, 0, 2.f);
+            const char* title = "JB OVERLAY v6";
+            dl->AddRectFilled(ImVec2(10, 10), ImVec2(620, 10 + boxH), IM_COL32(0, 0, 0, 220), 8.f);
+            dl->AddRect(ImVec2(10, 10), ImVec2(620, 10 + boxH), IM_COL32(0, 255, 0, 255), 8.f, 0, 2.f);
             dl->AddText(font, bigSize, ImVec2(20, 15), IM_COL32(0, 255, 0, 255), title);
 
-            // line 2: attach status
             ImU32 statusCol = diagAttached ? IM_COL32(0, 255, 0, 255) : IM_COL32(255, 50, 50, 255);
             dl->AddText(font, font->FontSize * 1.5f, ImVec2(20, 55), statusCol, diagLine1);
 
-            // line 3: error details
             if (diagLine2[0])
                 dl->AddText(font, font->FontSize * 1.2f, ImVec2(20, 82), IM_COL32(255, 255, 0, 255), diagLine2);
+
+            // show scan progress
+            if (diagAttached) {
+                auto& eCfg = esp.Cfg();
+                char scanBuf[128];
+                std::snprintf(scanBuf, sizeof scanBuf, "BM:%s | VM:%s | mode:%s",
+                    esp.Cfg().enabled ? "name-scan" : "off",
+                    esp.Cfg().enabled ? "bekliyor" : "off",
+                    off_.battleModelTypeInfo == 0 ? "NAME-SCAN" : "RVA");
+                dl->AddText(font, font->FontSize * 1.2f, ImVec2(20, 105),
+                    IM_COL32(180, 180, 255, 255), scanBuf);
+            }
         }
 
         ImGui::Render();
