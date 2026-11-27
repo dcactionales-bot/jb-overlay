@@ -125,10 +125,9 @@ bool Process::Attach(DWORD pid) {
         HANDLE h = nullptr;
         sc::ObjAttr oa{}; oa.length = sizeof(oa);
         sc::ClientId cid{}; cid.uniqueProcess = reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(pid));
-        if (sc::g_sc.openProc(&h, PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION, &oa, &cid) < 0 || !h)
-            return false;
-        h_ = h; pid_ = pid;
-        return true;
+        LONG status = sc::g_sc.openProc(&h, PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION, &oa, &cid);
+        if (status >= 0 && h) { h_ = h; pid_ = pid; return true; }
+        // syscall failed — try WinAPI fallback
     }
 
     HANDLE h = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);

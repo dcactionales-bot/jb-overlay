@@ -94,6 +94,14 @@ bool LoadOffsets(const std::string& path, Offsets& out) {
         // Role config
         if (key == "copRole")    { out.copRole    = static_cast<int>(std::strtol(val.c_str(), nullptr, 0)); continue; }
         if (key == "robberRole") { out.robberRole = static_cast<int>(std::strtol(val.c_str(), nullptr, 0)); continue; }
+
+        // Target process
+        if (key == "targetProcess") {
+            for (size_t i = 0; i < val.size() && i < 62; ++i)
+                out.targetProcess[i] = static_cast<wchar_t>(val[i]);
+            out.targetProcess[std::min(val.size(), size_t(62))] = L'\0';
+            continue;
+        }
     }
     return true;
 }
@@ -164,7 +172,10 @@ bool SaveDefaultOffsets(const std::string& path) {
 
     f << "# --- PlayerRole enum ---\n";
     f << "copRole    = 4\n";
-    f << "robberRole = 3\n";
+    f << "robberRole = 3\n\n";
+
+    f << "# --- Target process (leave empty for auto-detect) ---\n";
+    f << "# targetProcess = ROB RUN.exe\n";
 
     return true;
 }

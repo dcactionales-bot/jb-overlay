@@ -32,11 +32,14 @@ add_executable(dx11_overlay WIN32
     src/esp.cpp
     src/offsets.cpp
 )
-target_link_libraries(dx11_overlay PRIVATE imgui d3d11 dxgi d3dcompiler dwmapi)
+target_link_libraries(dx11_overlay PRIVATE imgui d3d11 dxgi d3dcompiler dwmapi shell32 advapi32)
 
 if(MSVC)
     target_compile_options(dx11_overlay PRIVATE /W4 /permissive-)
     target_compile_definitions(dx11_overlay PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    # embed manifest for admin auto-elevation
+    set_target_properties(dx11_overlay PROPERTIES
+        LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
 else()
     target_compile_options(dx11_overlay PRIVATE -Wall -Wextra)
 endif()

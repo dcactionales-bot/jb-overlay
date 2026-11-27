@@ -63,6 +63,9 @@ struct Offsets {
     // === PlayerRole enum: None=0 Citizen=1 Prisoner=2 Robber=3 Cop=4 Settler=5 ===
     int copRole    = 4;
     int robberRole = 3;
+
+    // === Target process name (overrides built-in default) ===
+    wchar_t targetProcess[64]{};
 };
 
 bool LoadOffsets(const std::string& path, Offsets& out);

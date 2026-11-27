@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <shellapi.h>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <dwmapi.h>
@@ -11,6 +12,7 @@
 #include <string>
 #include <winternl.h>
 #include <intrin.h>
+#include <tlhelp32.h>
 
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -34,7 +36,10 @@ struct XW {
     Buf dec() const { Buf b; for (size_t i = 0; i < N; i++) b.s[i] = d[i] ^ xkey; return b; }
 };
 
-static constexpr XW xTarget{L"ROB RUN.exe"};
+static constexpr XW xTarget0{L"ROB RUN.exe"};
+static constexpr XW xTarget1{L"RobRun.exe"};
+static constexpr XW xTarget2{L"Rob Run.exe"};
+static constexpr XW xTarget3{L"robrun.exe"};
 
 void Stage(const char* fmt, ...) {
     va_list args; va_start(args, fmt);
@@ -42,6 +47,22 @@ void Stage(const char* fmt, ...) {
     va_end(args);
     std::fputc('\n', stdout);
     std::fflush(stdout);
+}
+
+void ScanRunningProcesses() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32W pe{}; pe.dwSize = sizeof pe;
+    Stage("[scan] listing processes containing 'rob':");
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+        char narrow[260]{};
+        for (int i = 0; i < 259 && pe.szExeFile[i]; ++i)
+            narrow[i] = pe.szExeFile[i] < 128 ? static_cast<char>(pe.szExeFile[i]) : '?';
+        if (strstr(narrow, "rob") || strstr(narrow, "Rob") || strstr(narrow, "ROB") ||
+            strstr(narrow, "run") || strstr(narrow, "Run") || strstr(narrow, "RUN"))
+            Stage("  pid=%lu  %s", static_cast<unsigned long>(pe.th32ProcessID), narrow);
+    }
+    CloseHandle(snap);
 }
 
 constexpr ULONGLONG kAttachGapMs = 1000;
@@ -247,15 +268,57 @@ void Apply() {
 
 }  // namespace bypass
 
+bool IsAdmin() {
+    BOOL admin = FALSE;
+    SID_IDENTIFIER_AUTHORITY ntAuth = SECURITY_NT_AUTHORITY;
+    PSID grp = nullptr;
+    if (AllocateAndInitializeSid(&ntAuth, 2, SECURITY_BUILTIN_DOMAIN_RID,
+        DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &grp)) {
+        CheckTokenMembership(nullptr, grp, &admin);
+        FreeSid(grp);
+    }
+    return admin != FALSE;
+}
+
+void EnableDebugPriv() {
+    HANDLE tok = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &tok)) return;
+    TOKEN_PRIVILEGES tp{};
+    if (LookupPrivilegeValueW(nullptr, SE_DEBUG_NAME, &tp.Privileges[0].Luid)) {
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        AdjustTokenPrivileges(tok, FALSE, &tp, sizeof tp, nullptr, nullptr);
+    }
+    CloseHandle(tok);
+}
+
+void RelaunchAsAdmin() {
+    wchar_t path[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof sei;
+    sei.lpVerb = L"runas";
+    sei.lpFile = path;
+    sei.nShow = SW_SHOWNORMAL;
+    ShellExecuteExW(&sei);
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
+    if (!IsAdmin()) {
+        RelaunchAsAdmin();
+        return 0;
+    }
+
     AllocConsole();
     FILE* fDummy;
     freopen_s(&fDummy, "CONOUT$", "w", stdout);
     freopen_s(&fDummy, "CONOUT$", "w", stderr);
     SetConsoleTitleA("jb overlay");
-    Stage("[boot] starting");
+    Stage("[boot] starting (admin: yes)");
+    EnableDebugPriv();
+    Stage("[boot] SeDebugPrivilege enabled");
 
     cfg::Offsets offsets;
     char exePath[MAX_PATH]{};
@@ -402,11 +465,53 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
         }
 
         // process attach/detach
-        if (proc && !proc.Alive()) { proc.Close(); gameWindow = nullptr; }
+        if (proc && !proc.Alive()) { proc.Close(); gameWindow = nullptr; Stage("[detach] game closed"); }
         if (!proc && GetTickCount64() >= nextAttachMs) {
-            auto target = xTarget.dec();
-            if (proc.Attach(target.s)) {
-                Stage("[attach] found game (pid %lu)", static_cast<unsigned long>(proc.Pid()));
+            bool attached = false;
+            // try configured name first
+            if (offsets.targetProcess[0]) {
+                DWORD pid = mem::Process::FindPid(offsets.targetProcess);
+                if (pid) {
+                    if (proc.Attach(pid)) {
+                        Stage("[attach] found game via config (pid %lu)", static_cast<unsigned long>(pid));
+                        attached = true;
+                    } else {
+                        Stage("[attach] pid %lu found but OpenProcess FAILED (EAC?)", static_cast<unsigned long>(pid));
+                    }
+                }
+            }
+            // try built-in name variants
+            if (!attached) {
+                auto d0 = xTarget0.dec(); auto d1 = xTarget1.dec();
+                auto d2 = xTarget2.dec(); auto d3 = xTarget3.dec();
+                struct { const wchar_t* name; const char* label; } tries[] = {
+                    {d0.s, "ROB RUN.exe"}, {d1.s, "RobRun.exe"},
+                    {d2.s, "Rob Run.exe"}, {d3.s, "robrun.exe"},
+                };
+                for (auto& t : tries) {
+                    DWORD pid = mem::Process::FindPid(t.name);
+                    if (pid) {
+                        if (proc.Attach(pid)) {
+                            Stage("[attach] found game '%s' (pid %lu)", t.label, static_cast<unsigned long>(pid));
+                            attached = true;
+                            break;
+                        } else {
+                            Stage("[attach] '%s' pid %lu found but OpenProcess FAILED (EAC blocking?)", t.label, static_cast<unsigned long>(pid));
+                        }
+                    }
+                }
+            }
+            static int failCount = 0;
+            if (!attached) {
+                ++failCount;
+                if (failCount == 5) {
+                    Stage("[attach] game not found after 5 tries — scanning processes...");
+                    ScanRunningProcesses();
+                    Stage("[attach] if the game exe is listed above with a different name,");
+                    Stage("[attach] add 'targetProcess = ExeName.exe' to offsets.cfg and press F5");
+                }
+            } else {
+                failCount = 0;
             }
             nextAttachMs = GetTickCount64() + kAttachGapMs;
         }
