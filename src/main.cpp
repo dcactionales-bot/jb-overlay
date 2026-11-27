@@ -309,9 +309,8 @@ LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ep) {
     Stage("[CRASH] exception 0x%08X at 0x%p",
           ep->ExceptionRecord->ExceptionCode,
           ep->ExceptionRecord->ExceptionAddress);
-    Stage("[CRASH] press Enter to close");
-    FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
-    getchar();
+    std::fflush(stdout);
+    system("pause");
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -325,9 +324,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     FILE* fDummy;
     freopen_s(&fDummy, "CONOUT$", "w", stdout);
     freopen_s(&fDummy, "CONOUT$", "w", stderr);
+    freopen_s(&fDummy, "CONIN$",  "r", stdin);
     SetConsoleTitleA("jb overlay");
     SetUnhandledExceptionFilter(CrashHandler);
-    Stage("[boot] starting v2 (admin: yes)");
+    Stage("[boot] starting v3 (admin: yes)");
     EnableDebugPriv();
     Stage("[boot] SeDebugPrivilege enabled");
 
@@ -615,9 +615,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int) {
     DestroyWindow(hwnd);
     UnregisterClassW(className, hInstance);
 
-    Stage("[exit] clean — press Enter to close console");
-    FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
-    getchar();
+    Stage("[exit] clean");
+    std::fflush(stdout);
+    system("pause");
     FreeConsole();
     return 0;
 }
