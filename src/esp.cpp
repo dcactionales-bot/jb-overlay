@@ -1,4 +1,5 @@
 #include "esp.h"
+#include "spoofer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1227,6 +1228,82 @@ void Esp::RenderMenu() {
             ImGui::BulletText("F6   Save settings");
             ImGui::BulletText("INS  Toggle menu");
             ImGui::BulletText("END  Exit overlay");
+
+            ImGui::EndTabItem();
+        }
+
+        // ---- HWID TAB ----
+        if (ImGui::BeginTabItem("HWID")) {
+            static bool spoofRan = false;
+            static int  spoofOk  = 0;
+            static int  spoofFail = 0;
+            static int  macsChanged = 0;
+            static int  eacCleaned  = 0;
+            static char lastMsg[256]{};
+
+            Section("Mevcut Kimlikler");
+            {
+                auto show = [](const char* label, const char* path, const char* name) {
+                    std::string val = spoof::ReadReg(path, name);
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.7f, 1.f), "%-18s", label);
+                    ImGui::SameLine(140.f);
+                    ImGui::TextWrapped("%s", val.c_str());
+                };
+                show("MachineGuid",   "SOFTWARE\\Microsoft\\Cryptography", "MachineGuid");
+                show("HwProfileGuid", "SYSTEM\\CurrentControlSet\\Control\\IDConfigDB\\Hardware Profiles\\0001", "HwProfileGuid");
+                show("ProductId",     "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "ProductId");
+                show("BuildGUID",     "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "BuildGUID");
+                show("SQM MachineId", "SOFTWARE\\Microsoft\\SQMClient", "MachineId");
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (ImGui::Button("HEPSINI SPOOF ET", ImVec2(-1, 36))) {
+                spoofOk = 0; spoofFail = 0;
+                auto run = [&](bool (*fn)(std::string&)) {
+                    std::string v;
+                    if (fn(v)) ++spoofOk; else ++spoofFail;
+                };
+                run(spoof::SpoofMachineGuid);
+                run(spoof::SpoofHwProfileGuid);
+                run(spoof::SpoofProductId);
+                run(spoof::SpoofBuildGuid);
+                run(spoof::SpoofInstallDate);
+                run(spoof::SpoofSqmId);
+                macsChanged = spoof::SpoofMacAddresses();
+                eacCleaned  = spoof::CleanEacCache();
+                spoofRan = true;
+                std::snprintf(lastMsg, sizeof lastMsg,
+                    "Registry: %d/%d  |  MAC: %d  |  EAC: %d temizlendi",
+                    spoofOk, spoofOk + spoofFail, macsChanged, eacCleaned);
+            }
+
+            ImGui::Spacing();
+            if (ImGui::Button("SADECE EAC TEMIZLE", ImVec2(-1, 28))) {
+                eacCleaned = spoof::CleanEacCache();
+                std::snprintf(lastMsg, sizeof lastMsg, "EAC: %d item temizlendi", eacCleaned);
+                spoofRan = true;
+            }
+
+            if (spoofRan) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.f), "%s", lastMsg);
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.f, 0.8f, 0.2f, 1.f),
+                    "REBOOT GEREKLI! MAC + registry degisiklikleri restart sonrasi aktif olur.");
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            Section("Notlar");
+            ImGui::TextWrapped(
+                "Disk serial (NVMe/SATA) ve SMBIOS spoofing icin kernel driver lazim. "
+                "Bu tool sadece user-mode degisiklik yapar: registry GUID'ler, MAC, EAC cache. "
+                "Tam HWID spoof icin ayrica kernel spoofer kullan.");
+            ImGui::TextWrapped(
+                "Spoof sonrasi: 1) Reboot  2) Oyunu ac (EAC yeniden kurulur)  3) Overlay ac");
 
             ImGui::EndTabItem();
         }

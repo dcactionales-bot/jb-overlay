@@ -31,6 +31,7 @@ add_executable(dx11_overlay WIN32
     src/memory.cpp
     src/esp.cpp
     src/offsets.cpp
+    src/spoofer.cpp
 )
 target_link_libraries(dx11_overlay PRIVATE imgui d3d11 dxgi d3dcompiler dwmapi shell32 advapi32)
 
