@@ -45,6 +45,19 @@ else()
     target_compile_options(dx11_overlay PRIVATE -Wall -Wextra)
 endif()
 
+# standalone spoofer (console app, no overlay/imgui)
+add_executable(jb_spoofer
+    src/spoofer_main.cpp
+    src/spoofer.cpp
+)
+target_link_libraries(jb_spoofer PRIVATE advapi32 setupapi)
+if(MSVC)
+    target_compile_options(jb_spoofer PRIVATE /W4 /permissive-)
+    target_compile_definitions(jb_spoofer PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    set_target_properties(jb_spoofer PROPERTIES
+        LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+endif()
+
 # copy offsets.cfg next to exe on every build
 add_custom_command(TARGET dx11_overlay POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
