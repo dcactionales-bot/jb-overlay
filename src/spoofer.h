@@ -12,20 +12,33 @@
 
 namespace spoof {
 
-// read a REG_SZ from HKLM
+// ---- read current values ----
 std::string ReadReg(const char* path, const char* name);
+std::string ReadDiskSerial(int drive = 0);
+std::string ReadVolumeSerial(wchar_t letter = L'C');
+std::string ReadComputerName();
 
-// each returns true on success, fills newVal with the written value
-bool SpoofMachineGuid(std::string& newVal);
-bool SpoofHwProfileGuid(std::string& newVal);
-bool SpoofProductId(std::string& newVal);
-bool SpoofBuildGuid(std::string& newVal);
-bool SpoofInstallDate(std::string& newVal);
-bool SpoofSqmId(std::string& newVal);
+// ---- spoof registry identifiers (each fills newVal) ----
+bool SpoofMachineGuid(std::string& nv);
+bool SpoofHwProfileGuid(std::string& nv);
+bool SpoofProductId(std::string& nv);
+bool SpoofBuildGuid(std::string& nv);
+bool SpoofInstallDate(std::string& nv);
+bool SpoofSqmId(std::string& nv);
+bool SpoofComputerName(std::string& nv);
 
-// returns number of adapters changed
-int  SpoofMacAddresses();
-// returns number of items cleaned
-int  CleanEacCache();
+// ---- volume serial (NTFS VBR write, needs admin) ----
+bool SpoofVolumeSerial(wchar_t letter, std::string& nv);
+
+// ---- MAC addresses ----
+int  SpoofMacAddresses();     // registry change, returns adapters changed
+void ResetAdapters();          // SetupDi disable/enable cycle (immediate apply)
+
+// ---- cleanup ----
+int  CleanEac();               // EAC cache + registry
+int  CleanTraces();            // prefetch, temp, game traces
+
+// ---- backup original values to file ----
+bool BackupHwids(const char* path);
 
 }  // namespace spoof

@@ -1234,32 +1234,69 @@ void Esp::RenderMenu() {
 
         // ---- HWID TAB ----
         if (ImGui::BeginTabItem("HWID")) {
-            static bool spoofRan = false;
-            static int  spoofOk  = 0;
-            static int  spoofFail = 0;
+            static bool spoofRan    = false;
+            static bool backupDone  = false;
+            static int  spoofOk     = 0;
+            static int  spoofFail   = 0;
             static int  macsChanged = 0;
             static int  eacCleaned  = 0;
-            static char lastMsg[256]{};
+            static int  tracesCleaned = 0;
+            static char lastMsg[512]{};
 
-            Section("Mevcut Kimlikler");
-            {
-                auto show = [](const char* label, const char* path, const char* name) {
-                    std::string val = spoof::ReadReg(path, name);
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.7f, 1.f), "%-18s", label);
-                    ImGui::SameLine(140.f);
-                    ImGui::TextWrapped("%s", val.c_str());
-                };
-                show("MachineGuid",   "SOFTWARE\\Microsoft\\Cryptography", "MachineGuid");
-                show("HwProfileGuid", "SYSTEM\\CurrentControlSet\\Control\\IDConfigDB\\Hardware Profiles\\0001", "HwProfileGuid");
-                show("ProductId",     "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "ProductId");
-                show("BuildGUID",     "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "BuildGUID");
-                show("SQM MachineId", "SOFTWARE\\Microsoft\\SQMClient", "MachineId");
-            }
+            ImVec4 dim(0.6f, 0.6f, 0.7f, 1.f);
+            ImVec4 grn(0.3f, 0.9f, 0.3f, 1.f);
+            ImVec4 ylw(1.f, 0.8f, 0.2f, 1.f);
+
+            auto showReg = [&](const char* label, const char* path, const char* name) {
+                ImGui::TextColored(dim, "%-18s", label);
+                ImGui::SameLine(150.f);
+                std::string val = spoof::ReadReg(path, name);
+                ImGui::TextWrapped("%s", val.c_str());
+            };
+            auto showVal = [&](const char* label, const std::string& val) {
+                ImGui::TextColored(dim, "%-18s", label);
+                ImGui::SameLine(150.f);
+                ImGui::TextWrapped("%s", val.c_str());
+            };
+
+            // ---- current IDs ----
+            Section("Registry Kimlikleri");
+            showReg("MachineGuid",   "SOFTWARE\\Microsoft\\Cryptography", "MachineGuid");
+            showReg("HwProfileGuid", "SYSTEM\\CurrentControlSet\\Control\\IDConfigDB\\Hardware Profiles\\0001", "HwProfileGuid");
+            showReg("ProductId",     "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "ProductId");
+            showReg("BuildGUID",     "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "BuildGUID");
+            showReg("SQM MachineId", "SOFTWARE\\Microsoft\\SQMClient", "MachineId");
+            showReg("InstallDate",   "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "InstallDate");
+
+            Section("Donanim Kimlikleri");
+            showVal("Bilgisayar Adi", spoof::ReadComputerName());
+            showVal("Volume Serial",  spoof::ReadVolumeSerial(L'C'));
+            showVal("Disk Serial",    spoof::ReadDiskSerial(0));
 
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
+            // ---- backup ----
+            if (!backupDone) {
+                if (ImGui::Button("YEDEKLE (backup)", ImVec2(-1, 28))) {
+                    char exePath[MAX_PATH]{};
+                    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+                    std::string bp(exePath);
+                    auto sl = bp.find_last_of("\\/");
+                    if (sl != std::string::npos) bp = bp.substr(0, sl + 1);
+                    bp += "hwid_backup.txt";
+                    backupDone = spoof::BackupHwids(bp.c_str());
+                    if (backupDone)
+                        std::snprintf(lastMsg, sizeof lastMsg, "Yedek: hwid_backup.txt kaydedildi");
+                    else
+                        std::snprintf(lastMsg, sizeof lastMsg, "Yedek: yazma hatasi!");
+                    spoofRan = true;
+                }
+                ImGui::Spacing();
+            }
+
+            // ---- full spoof ----
             if (ImGui::Button("HEPSINI SPOOF ET", ImVec2(-1, 36))) {
                 spoofOk = 0; spoofFail = 0;
                 auto run = [&](bool (*fn)(std::string&)) {
@@ -1272,38 +1309,66 @@ void Esp::RenderMenu() {
                 run(spoof::SpoofBuildGuid);
                 run(spoof::SpoofInstallDate);
                 run(spoof::SpoofSqmId);
-                macsChanged = spoof::SpoofMacAddresses();
-                eacCleaned  = spoof::CleanEacCache();
+                run(spoof::SpoofComputerName);
+
+                std::string volResult;
+                if (spoof::SpoofVolumeSerial(L'C', volResult)) ++spoofOk; else ++spoofFail;
+
+                macsChanged    = spoof::SpoofMacAddresses();
+                eacCleaned     = spoof::CleanEac();
+                tracesCleaned  = spoof::CleanTraces();
+
+                spoof::ResetAdapters();
+
                 spoofRan = true;
                 std::snprintf(lastMsg, sizeof lastMsg,
-                    "Registry: %d/%d  |  MAC: %d  |  EAC: %d temizlendi",
-                    spoofOk, spoofOk + spoofFail, macsChanged, eacCleaned);
+                    "Registry: %d/%d  |  MAC: %d adapter  |  Volume: %s\n"
+                    "EAC: %d  |  Traces: %d  |  Adapter reset: tamam",
+                    spoofOk, spoofOk + spoofFail, macsChanged,
+                    volResult.empty() ? "basarisiz" : volResult.c_str(),
+                    eacCleaned, tracesCleaned);
             }
 
             ImGui::Spacing();
-            if (ImGui::Button("SADECE EAC TEMIZLE", ImVec2(-1, 28))) {
-                eacCleaned = spoof::CleanEacCache();
-                std::snprintf(lastMsg, sizeof lastMsg, "EAC: %d item temizlendi", eacCleaned);
+
+            // ---- partial actions ----
+            if (ImGui::Button("SADECE EAC + IZ TEMIZLE", ImVec2(-1, 28))) {
+                eacCleaned    = spoof::CleanEac();
+                tracesCleaned = spoof::CleanTraces();
+                std::snprintf(lastMsg, sizeof lastMsg,
+                    "EAC: %d  |  Traces: %d temizlendi", eacCleaned, tracesCleaned);
                 spoofRan = true;
             }
 
+            ImGui::Spacing();
+
+            if (ImGui::Button("SADECE MAC SPOOF + RESET", ImVec2(-1, 28))) {
+                macsChanged = spoof::SpoofMacAddresses();
+                spoof::ResetAdapters();
+                std::snprintf(lastMsg, sizeof lastMsg,
+                    "MAC: %d adapter degistirildi + reset yapildi", macsChanged);
+                spoofRan = true;
+            }
+
+            // ---- result ----
             if (spoofRan) {
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.f), "%s", lastMsg);
+                ImGui::TextColored(grn, "%s", lastMsg);
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1.f, 0.8f, 0.2f, 1.f),
-                    "REBOOT GEREKLI! MAC + registry degisiklikleri restart sonrasi aktif olur.");
+                ImGui::TextColored(ylw,
+                    "REBOOT GEREKLI! Bilgisayar adi + registry degisiklikleri restart sonrasi aktif.");
             }
 
             ImGui::Spacing();
             ImGui::Separator();
             Section("Notlar");
             ImGui::TextWrapped(
-                "Disk serial (NVMe/SATA) ve SMBIOS spoofing icin kernel driver lazim. "
-                "Bu tool sadece user-mode degisiklik yapar: registry GUID'ler, MAC, EAC cache. "
+                "Volume serial: NTFS VBR yazma (admin gerekli). "
+                "Disk serial (NVMe/SATA) ve SMBIOS: kernel driver lazim — bu tool degistiremez, sadece okur. "
                 "Tam HWID spoof icin ayrica kernel spoofer kullan.");
             ImGui::TextWrapped(
-                "Spoof sonrasi: 1) Reboot  2) Oyunu ac (EAC yeniden kurulur)  3) Overlay ac");
+                "Spoof sirasi: 1) Yedekle  2) Hepsini spoof et  3) Reboot  "
+                "4) Oyunu ac (EAC yeniden kurulur)  5) Overlay ac");
 
             ImGui::EndTabItem();
         }
