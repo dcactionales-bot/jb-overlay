@@ -1,15 +1,35 @@
 #include "spoofer.h"
 #include <cstdio>
+#include <cstdlib>
+#include <windows.h>
 
 int main() {
+    SetConsoleTitleA("JB HWID Spoofer");
     printf("=== JB HWID SPOOFER ===\n\n");
+
+    // check admin
+    BOOL isAdmin = FALSE;
+    PSID adminGroup = nullptr;
+    SID_IDENTIFIER_AUTHORITY ntAuth = SECURITY_NT_AUTHORITY;
+    if (AllocateAndInitializeSid(&ntAuth, 2,
+            SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS,
+            0, 0, 0, 0, 0, 0, &adminGroup)) {
+        CheckTokenMembership(nullptr, adminGroup, &isAdmin);
+        FreeSid(adminGroup);
+    }
+    if (!isAdmin) {
+        printf("!!! ADMIN OLARAK CALISTIR !!!\n");
+        printf("Sag tik -> Yonetici olarak calistir\n\n");
+        system("pause");
+        return 1;
+    }
 
     // backup
     printf("[1] Yedekleniyor...\n");
     if (spoof::BackupHwids("hwid_backup.txt"))
         printf("    hwid_backup.txt kaydedildi\n");
     else
-        printf("    HATA: yedek yazilamadi\n");
+        printf("    UYARI: yedek yazilamadi (devam ediyor)\n");
 
     // show current
     printf("\n--- MEVCUT KIMLIKLER ---\n");
@@ -21,11 +41,11 @@ int main() {
     printf("Disk Serial:   %s\n", spoof::ReadDiskSerial(0).c_str());
 
     // spoof
-    printf("\n[2] Spoofing...\n");
+    printf("\n[2] Registry spoofing...\n");
     int ok = 0, fail = 0;
     auto run = [&](const char* name, bool (*fn)(std::string&)) {
         std::string v;
-        if (fn(v)) { printf("    OK  %-18s -> %s\n", name, v.c_str()); ++ok; }
+        if (fn(v)) { printf("    OK   %-18s -> %s\n", name, v.c_str()); ++ok; }
         else       { printf("    FAIL %-18s\n", name); ++fail; }
     };
 
@@ -37,37 +57,42 @@ int main() {
     run("SQM MachineId", spoof::SpoofSqmId);
     run("ComputerName",  spoof::SpoofComputerName);
 
+    printf("\n[3] Volume serial...\n");
     std::string volResult;
     if (spoof::SpoofVolumeSerial(L'C', volResult)) {
-        printf("    OK  %-18s -> %s\n", "VolumeSerial", volResult.c_str()); ++ok;
+        printf("    OK   VolumeSerial      -> %s\n", volResult.c_str()); ++ok;
     } else {
-        printf("    FAIL %-18s\n", "VolumeSerial"); ++fail;
+        printf("    FAIL VolumeSerial (normal — bazi disklerde calismaz)\n"); ++fail;
     }
 
     // MAC
-    printf("\n[3] MAC adresleri...\n");
+    printf("\n[4] MAC adresleri...\n");
     int macs = spoof::SpoofMacAddresses();
     printf("    %d adapter degistirildi\n", macs);
-    printf("    Adapter reset yapiliyor...\n");
-    spoof::ResetAdapters();
-    printf("    Tamam\n");
+    if (macs > 0) {
+        printf("    Adapter reset yapiliyor (internet 2 sn kesilir)...\n");
+        spoof::ResetAdapters();
+        printf("    Tamam\n");
+    }
 
     // cleanup
-    printf("\n[4] Temizlik...\n");
+    printf("\n[5] Temizlik...\n");
     int eac = spoof::CleanEac();
     int traces = spoof::CleanTraces();
     printf("    EAC: %d temizlendi\n", eac);
     printf("    Traces: %d temizlendi\n", traces);
 
     // summary
-    printf("\n=== SONUC ===\n");
-    printf("Registry: %d/%d basarili\n", ok, ok + fail);
-    printf("MAC: %d adapter\n", macs);
-    printf("EAC + iz: %d + %d temizlendi\n", eac, traces);
-    printf("\n*** BILGISAYARI YENIDEN BASLAT ***\n");
-    printf("Reboot sonrasi oyunu ac, sonra overlay'i ac.\n\n");
+    printf("\n========================================\n");
+    printf("  SONUC\n");
+    printf("========================================\n");
+    printf("  Registry : %d/%d basarili\n", ok, ok + fail);
+    printf("  MAC      : %d adapter\n", macs);
+    printf("  EAC + iz : %d + %d temizlendi\n", eac, traces);
+    printf("========================================\n");
+    printf("\n  *** BILGISAYARI YENIDEN BASLAT ***\n");
+    printf("  Reboot sonrasi oyunu ac, sonra overlay'i ac.\n\n");
 
-    printf("Kapatmak icin bir tusa bas...\n");
-    getchar();
+    system("pause");
     return 0;
 }
